@@ -236,8 +236,17 @@ body {
 .config-strip {
   padding: 14px 16px;
   display: grid;
-  grid-template-columns: 1.25fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+.drive-pill-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-muted-fg);
 }
 
 .dest-picker {

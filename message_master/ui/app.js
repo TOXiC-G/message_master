@@ -7,6 +7,8 @@ const { open: openShell } = window.__TAURI__.shell;
 const appWindow = getCurrentWindow();
 
 let selectedPath = null;
+let lastOutputPath = null;
+let lastDisplayName = "";
 let currentWhatsappUrl = "";
 let updateReleaseUrl = "";
 let updateInstallerPath = null;
@@ -17,18 +19,23 @@ const dropZone = document.getElementById("dropZone");
 const dropTitle = document.getElementById("dropTitle");
 const dropSub = document.getElementById("dropSub");
 const customNameInput = document.getElementById("customNameInput");
+const localOutputLabel = document.getElementById("localOutputLabel");
+const pickLocalDirBtn = document.getElementById("pickLocalDirBtn");
 const destFolderName = document.getElementById("destFolderName");
 const browseDriveBtn = document.getElementById("browseDriveBtn");
 const startBtn = document.getElementById("startBtn");
-const uploadToggle = document.getElementById("uploadToggle");
 const driveStatusDot = document.getElementById("driveStatusDot");
+const driveConnLabel = document.getElementById("driveConnLabel");
 const progressCard = document.getElementById("progressCard");
 const progressLabel = document.getElementById("progressLabel");
 const progressStep = document.getElementById("progressStep");
 const progressFill = document.getElementById("progressFill");
 const errorBanner = document.getElementById("errorBanner");
 const resultCard = document.getElementById("resultCard");
+const shareTitle = document.getElementById("shareTitle");
 const shareMessage = document.getElementById("shareMessage");
+const uploadDriveBtn = document.getElementById("uploadDriveBtn");
+const uploadDriveBtnText = document.getElementById("uploadDriveBtnText");
 const copyBtn = document.getElementById("copyBtn");
 const copyBtnText = document.getElementById("copyBtnText");
 const whatsappBtn = document.getElementById("whatsappBtn");
@@ -86,8 +93,17 @@ function applyConfigToUI(cfg) {
     destFolderName.textContent = "My Drive (Root)";
   }
 
+  if (cfg.local_output_dir) {
+    localOutputLabel.textContent = cfg.local_output_dir.split(/[\\/]/).pop() || cfg.local_output_dir;
+    localOutputLabel.title = cfg.local_output_dir;
+  } else {
+    localOutputLabel.textContent = "Same as input file";
+    localOutputLabel.title = "";
+  }
+
   const connected = Boolean(cfg.refresh_token);
   driveStatusDot.classList.toggle("connected", connected);
+  driveConnLabel.textContent = connected ? "Google Drive connected" : "Google Drive not connected";
   oauthStatus.textContent = connected ? "Connected to Google Drive" : "Not connected";
   oauthStatus.classList.toggle("connected", connected);
 }
@@ -96,6 +112,7 @@ function readConfigFromUI(existing) {
   return {
     drive_folder_input: document.getElementById("cfgFolder").value.trim(),
     drive_folder_name: existing.drive_folder_name || "",
+    local_output_dir: existing.local_output_dir || "",
     oauth_client_id: document.getElementById("cfgClientId").value.trim(),
     oauth_client_secret: document.getElementById("cfgClientSecret").value.trim(),
     refresh_token: existing.refresh_token,
@@ -156,13 +173,23 @@ listen("tauri://drag-drop", (event) => {
   }
 });
 
+pickLocalDirBtn.addEventListener("click", async () => {
+  const dir = await openDialog({ directory: true, multiple: false });
+  if (dir) {
+    const existing = await invoke("get_config");
+    const updated = { ...existing, local_output_dir: dir };
+    await invoke("save_config", { cfg: updated });
+    applyConfigToUI(updated);
+  }
+});
+
 // Progress listener
 listen("mastering-progress", (event) => {
   const { step, label } = event.payload;
   progressCard.classList.remove("hidden");
   progressLabel.textContent = label;
-  progressStep.textContent = `Step ${step} / 6`;
-  const pct = Math.min(100, Math.round((step / 6) * 100));
+  progressStep.textContent = `Step ${step} / 5`;
+  const pct = Math.min(100, Math.round((step / 5) * 100));
   progressFill.style.width = `${pct}%`;
 });
 
@@ -192,15 +219,16 @@ startBtn.addEventListener("click", async () => {
   errorBanner.classList.add("hidden");
   resultCard.classList.add("hidden");
   progressCard.classList.remove("hidden");
-  progressFill.style.width = "8%";
-  progressStep.textContent = "Step 1 / 6";
+  progressFill.style.width = "10%";
+  progressStep.textContent = "Step 1 / 5";
   progressLabel.textContent = "Starting mastering pipeline...";
 
   try {
-    const res = await invoke("process_and_upload", {
+    const cfg = await invoke("get_config");
+    const res = await invoke("process_audio", {
       inputPath: selectedPath,
       customName: customNameInput.value.trim() || null,
-      uploadToDrive: uploadToggle.checked,
+      outputDir: cfg.local_output_dir || null,
     });
 
     progressCard.classList.add("hidden");
@@ -212,21 +240,47 @@ startBtn.addEventListener("click", async () => {
     document.getElementById("mBitrate").textContent = `${res.bitrate_kbps} kbps MP3`;
     document.getElementById("mLufs").textContent = `${res.final_lufs.toFixed(1)} LUFS`;
 
+    lastOutputPath = res.output_path;
+    lastDisplayName = res.display_name;
+    shareTitle.textContent = "Saved to Disk — Ready to Upload";
     shareMessage.value = res.share_message;
     currentWhatsappUrl = res.whatsapp_url;
+    driveWarn.classList.add("hidden");
 
-    if (res.drive_error) {
-      driveWarn.textContent = `Drive upload skipped: ${res.drive_error}`;
-      driveWarn.classList.remove("hidden");
-    } else {
-      driveWarn.classList.add("hidden");
-    }
+    uploadDriveBtn.classList.remove("hidden");
+    uploadDriveBtn.disabled = false;
+    uploadDriveBtnText.textContent = "Upload to Google Drive";
+    whatsappBtn.classList.add("hidden");
   } catch (err) {
     progressCard.classList.add("hidden");
     errorBanner.textContent = String(err);
     errorBanner.classList.remove("hidden");
   } finally {
     startBtn.disabled = false;
+  }
+});
+
+uploadDriveBtn.addEventListener("click", async () => {
+  if (!lastOutputPath) return;
+  uploadDriveBtn.disabled = true;
+  uploadDriveBtnText.textContent = "Uploading...";
+  driveWarn.classList.add("hidden");
+
+  try {
+    const res = await invoke("upload_mastered_file", {
+      filePath: lastOutputPath,
+      displayName: lastDisplayName,
+    });
+    shareTitle.textContent = "Uploaded to Google Drive — Ready to Share";
+    shareMessage.value = res.share_message;
+    currentWhatsappUrl = res.whatsapp_url;
+    uploadDriveBtn.classList.add("hidden");
+    whatsappBtn.classList.remove("hidden");
+  } catch (err) {
+    driveWarn.textContent = `Upload failed: ${String(err)}`;
+    driveWarn.classList.remove("hidden");
+    uploadDriveBtn.disabled = false;
+    uploadDriveBtnText.textContent = "Retry Upload";
   }
 });
 

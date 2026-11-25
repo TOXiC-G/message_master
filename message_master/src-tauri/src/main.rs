@@ -145,11 +145,11 @@ async fn delete_drive_folder(folder_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn process_and_upload(
+async fn process_audio(
     app: AppHandle,
     input_path: String,
     custom_name: Option<String>,
-    upload_to_drive: bool,
+    output_dir: Option<String>,
 ) -> Result<ProcessResult, String> {
     let in_path = PathBuf::from(&input_path);
     if !in_path.exists() {
@@ -175,13 +175,27 @@ async fn process_and_upload(
         .filter(|s| !s.is_empty())
         .unwrap_or(default_name);
 
-    // Sanitize filename for filesystem while keeping display_name intact for message text
     let safe_filename: String = display_name
         .chars()
         .map(|c| if "<>:\"/\\|?*".contains(c) { '-' } else { c })
         .collect();
 
-    let out_dir = in_path.parent().unwrap_or_else(|| Path::new("."));
+    let chosen_dir = output_dir
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            let c = cfg.local_output_dir.trim();
+            if c.is_empty() { None } else { Some(c.to_string()) }
+        });
+
+    let out_dir = match chosen_dir {
+        Some(d) => PathBuf::from(d),
+        None => in_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf(),
+    };
+    if !out_dir.exists() {
+        std::fs::create_dir_all(&out_dir)
+            .map_err(|e| format!("Failed to create output folder: {e}"))?;
+    }
     let out_path = out_dir.join(format!("{safe_filename}_MASTERED.mp3"));
 
     let app_clone = app.clone();
@@ -249,22 +263,7 @@ async fn process_and_upload(
     .await
     .map_err(|e| format!("Processing thread error: {e}"))??;
 
-    let mut drive_link: Option<String> = None;
-    let mut drive_error: Option<String> = None;
-
-    if upload_to_drive {
-        emit_progress(&app, 6, "Uploading mastered MP3 to Google Drive...");
-        let upload_filename = format!("{safe_filename}.mp3");
-        match gdrive::upload_file(&cfg, &out_path, &upload_filename).await {
-            Ok(link) => drive_link = Some(link),
-            Err(e) => drive_error = Some(e),
-        }
-    }
-
-    let share_message = match &drive_link {
-        Some(link) => format!("{display_name}\n{link}"),
-        None => format!("{display_name}\n{}", stats.output_path),
-    };
+    let share_message = format!("{display_name}\n{}", stats.output_path);
     let whatsapp_url = format!(
         "https://wa.me/?text={}",
         urlencoding::encode(&share_message)
@@ -282,8 +281,44 @@ async fn process_and_upload(
         mastered_duration_s: stats.mastered_duration_s,
         initial_lufs: stats.initial_lufs,
         final_lufs: stats.final_lufs,
-        drive_link,
-        drive_error,
+        drive_link: None,
+        drive_error: None,
+        share_message,
+        whatsapp_url,
+    })
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct UploadResult {
+    drive_link: String,
+    share_message: String,
+    whatsapp_url: String,
+}
+
+#[tauri::command]
+async fn upload_mastered_file(
+    file_path: String,
+    display_name: String,
+) -> Result<UploadResult, String> {
+    let cfg = AppConfig::load();
+    let path = PathBuf::from(&file_path);
+    if !path.exists() {
+        return Err("Mastered file not found on disk.".into());
+    }
+    let safe_filename: String = display_name
+        .trim()
+        .chars()
+        .map(|c| if "<>:\"/\\|?*".contains(c) { '-' } else { c })
+        .collect();
+    let upload_filename = format!("{safe_filename}.mp3");
+    let link = gdrive::upload_file(&cfg, &path, &upload_filename).await?;
+    let share_message = format!("{}\n{link}", display_name.trim());
+    let whatsapp_url = format!(
+        "https://wa.me/?text={}",
+        urlencoding::encode(&share_message)
+    );
+    Ok(UploadResult {
+        drive_link: link,
         share_message,
         whatsapp_url,
     })
@@ -313,7 +348,8 @@ fn main() {
             create_drive_folder,
             rename_drive_folder,
             delete_drive_folder,
-            process_and_upload
+            process_audio,
+            upload_mastered_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running MessageMaster");

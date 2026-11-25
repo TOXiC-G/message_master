@@ -2080,7 +2080,7 @@ dependencies = [
 
 [[package]]
 name = "message_master"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
