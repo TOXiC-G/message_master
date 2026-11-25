@@ -21,6 +21,13 @@ const dropSub = document.getElementById("dropSub");
 const customNameInput = document.getElementById("customNameInput");
 const localOutputLabel = document.getElementById("localOutputLabel");
 const pickLocalDirBtn = document.getElementById("pickLocalDirBtn");
+const modeDirectBtn = document.getElementById("modeDirectBtn");
+const modeBaseBtn = document.getElementById("modeBaseBtn");
+const saveDateInput = document.getElementById("saveDateInput");
+const basePathHint = document.getElementById("basePathHint");
+const localDirTitle = document.getElementById("localDirTitle");
+const driveNameField = document.getElementById("driveNameField");
+const driveNameInput = document.getElementById("driveNameInput");
 const destFolderName = document.getElementById("destFolderName");
 const browseDriveBtn = document.getElementById("browseDriveBtn");
 const startBtn = document.getElementById("startBtn");
@@ -66,7 +73,31 @@ document.getElementById("minBtn").addEventListener("click", () => appWindow.mini
 document.getElementById("maxBtn").addEventListener("click", () => appWindow.toggleMaximize());
 document.getElementById("closeBtn").addEventListener("click", () => appWindow.close());
 
+function getTodayLocalISO() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function updateSaveModeUI(mode) {
+  const isBase = mode === "base";
+  modeDirectBtn.classList.toggle("active", !isBase);
+  modeBaseBtn.classList.toggle("active", isBase);
+  saveDateInput.classList.toggle("hidden", !isBase);
+  basePathHint.classList.toggle("hidden", !isBase);
+  localDirTitle.textContent = isBase ? "Base Folder (Year / Month)" : "Save to Local Folder";
+  if (isBase && saveDateInput.value) {
+    const [y, m] = saveDateInput.value.split("-").map(Number);
+    const dt = new Date(y, m - 1, 1);
+    const monthName = dt.toLocaleString("en-US", { month: "long" });
+    basePathHint.textContent = `Saves into: <base>\\${y}\\${monthName}\\`;
+  }
+}
+
 async function init() {
+  saveDateInput.value = getTodayLocalISO();
   try {
     const ver = await invoke("get_app_version");
     document.getElementById("appVersion").textContent = `v${ver}`;
@@ -100,6 +131,7 @@ function applyConfigToUI(cfg) {
     localOutputLabel.textContent = "Same as input file";
     localOutputLabel.title = "";
   }
+  updateSaveModeUI(cfg.save_mode || "direct");
 
   const connected = Boolean(cfg.refresh_token);
   driveStatusDot.classList.toggle("connected", connected);
@@ -113,6 +145,7 @@ function readConfigFromUI(existing) {
     drive_folder_input: document.getElementById("cfgFolder").value.trim(),
     drive_folder_name: existing.drive_folder_name || "",
     local_output_dir: existing.local_output_dir || "",
+    save_mode: existing.save_mode || "direct",
     oauth_client_id: document.getElementById("cfgClientId").value.trim(),
     oauth_client_secret: document.getElementById("cfgClientSecret").value.trim(),
     refresh_token: existing.refresh_token,
@@ -183,6 +216,20 @@ pickLocalDirBtn.addEventListener("click", async () => {
   }
 });
 
+async function setSaveMode(mode) {
+  const existing = await invoke("get_config");
+  const updated = { ...existing, save_mode: mode };
+  await invoke("save_config", { cfg: updated });
+  updateSaveModeUI(mode);
+}
+
+modeDirectBtn.addEventListener("click", () => setSaveMode("direct"));
+modeBaseBtn.addEventListener("click", () => setSaveMode("base"));
+saveDateInput.addEventListener("change", async () => {
+  const cfg = await invoke("get_config");
+  updateSaveModeUI(cfg.save_mode || "direct");
+});
+
 // Progress listener
 listen("mastering-progress", (event) => {
   const { step, label } = event.payload;
@@ -229,6 +276,8 @@ startBtn.addEventListener("click", async () => {
       inputPath: selectedPath,
       customName: customNameInput.value.trim() || null,
       outputDir: cfg.local_output_dir || null,
+      saveMode: cfg.save_mode || "direct",
+      saveDate: saveDateInput.value || null,
     });
 
     progressCard.classList.add("hidden");
@@ -242,6 +291,8 @@ startBtn.addEventListener("click", async () => {
 
     lastOutputPath = res.output_path;
     lastDisplayName = res.display_name;
+    driveNameField.classList.remove("hidden");
+    driveNameInput.value = res.display_name;
     shareTitle.textContent = "Saved to Disk — Ready to Upload";
     shareMessage.value = res.share_message;
     currentWhatsappUrl = res.whatsapp_url;
@@ -270,10 +321,12 @@ uploadDriveBtn.addEventListener("click", async () => {
     const res = await invoke("upload_mastered_file", {
       filePath: lastOutputPath,
       displayName: lastDisplayName,
+      driveName: driveNameInput.value.trim() || null,
     });
     shareTitle.textContent = "Uploaded to Google Drive — Ready to Share";
     shareMessage.value = res.share_message;
     currentWhatsappUrl = res.whatsapp_url;
+    driveNameField.classList.add("hidden");
     uploadDriveBtn.classList.add("hidden");
     whatsappBtn.classList.remove("hidden");
   } catch (err) {

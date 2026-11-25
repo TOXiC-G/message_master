@@ -9,6 +9,8 @@ pub struct AppConfig {
     pub drive_folder_name: String,
     #[serde(default)]
     pub local_output_dir: String,
+    #[serde(default = "default_save_mode")]
+    pub save_mode: String,
     pub oauth_client_id: String,
     pub oauth_client_secret: String,
     pub refresh_token: Option<String>,
@@ -17,12 +19,17 @@ pub struct AppConfig {
     pub make_public_link: bool,
 }
 
+fn default_save_mode() -> String {
+    "direct".to_string()
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             drive_folder_input: String::new(),
             drive_folder_name: String::new(),
             local_output_dir: String::new(),
+            save_mode: default_save_mode(),
             oauth_client_id: String::new(),
             oauth_client_secret: String::new(),
             refresh_token: None,

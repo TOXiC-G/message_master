@@ -75,11 +75,21 @@
         <input type="text" id="customNameInput" placeholder="Auto-filled when you pick a file..." />
       </div>
       <div class="field">
-        <label>Save to Local Folder</label>
-        <div class="dest-picker">
-          <span class="dest-name" id="localOutputLabel">Same as input file</span>
-          <button class="btn-chip" id="pickLocalDirBtn" type="button">Choose</button>
+        <div class="label-row">
+          <label id="localDirTitle">Save to Local Folder</label>
+          <div class="mode-pills" role="group" aria-label="Save mode">
+            <button type="button" class="mode-pill active" id="modeDirectBtn">Direct</button>
+            <button type="button" class="mode-pill" id="modeBaseBtn">Base Folder</button>
+          </div>
         </div>
+        <div class="dir-date-row">
+          <div class="dest-picker" style="flex: 1; min-width: 0;">
+            <span class="dest-name" id="localOutputLabel">Same as input file</span>
+            <button class="btn-chip" id="pickLocalDirBtn" type="button">Choose</button>
+          </div>
+          <input type="date" id="saveDateInput" class="date-input hidden" title="Folder Year/Month date" />
+        </div>
+        <span class="path-hint hidden" id="basePathHint"></span>
       </div>
       <div class="field drive-dest-field">
         <label>Google Drive Destination</label>
@@ -145,6 +155,10 @@
         <div class="share-header">
           <span class="share-title" id="shareTitle">Saved to Disk — Ready to Upload</span>
           <span class="drive-warn hidden" id="driveWarn"></span>
+        </div>
+        <div class="field" id="driveNameField">
+          <label for="driveNameInput">Google Drive Upload Name (defaults to same name)</label>
+          <input type="text" id="driveNameInput" placeholder="File name on Google Drive..." />
         </div>
         <textarea class="share-textarea" id="shareMessage" rows="2" readonly></textarea>
         <div class="share-actions">

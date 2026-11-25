@@ -150,6 +150,8 @@ async fn process_audio(
     input_path: String,
     custom_name: Option<String>,
     output_dir: Option<String>,
+    save_mode: Option<String>,
+    save_date: Option<String>,
 ) -> Result<ProcessResult, String> {
     let in_path = PathBuf::from(&input_path);
     if !in_path.exists() {
@@ -188,10 +190,28 @@ async fn process_audio(
             if c.is_empty() { None } else { Some(c.to_string()) }
         });
 
-    let out_dir = match chosen_dir {
+    let base_out_dir = match chosen_dir {
         Some(d) => PathBuf::from(d),
         None => in_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf(),
     };
+
+    let mode = save_mode
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| cfg.save_mode.to_lowercase());
+
+    let out_dir = if mode == "base" {
+        let parsed_date = save_date
+            .as_deref()
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok())
+            .unwrap_or_else(|| chrono::Local::now().date_naive());
+        let year_str = parsed_date.format("%Y").to_string();
+        let month_str = parsed_date.format("%B").to_string(); // Full English month, e.g. "November"
+        base_out_dir.join(year_str).join(month_str)
+    } else {
+        base_out_dir
+    };
+
     if !out_dir.exists() {
         std::fs::create_dir_all(&out_dir)
             .map_err(|e| format!("Failed to create output folder: {e}"))?;
@@ -299,20 +319,25 @@ struct UploadResult {
 async fn upload_mastered_file(
     file_path: String,
     display_name: String,
+    drive_name: Option<String>,
 ) -> Result<UploadResult, String> {
     let cfg = AppConfig::load();
     let path = PathBuf::from(&file_path);
     if !path.exists() {
         return Err("Mastered file not found on disk.".into());
     }
-    let safe_filename: String = display_name
-        .trim()
+    let final_name = drive_name
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| display_name.trim().to_string());
+
+    let safe_filename: String = final_name
         .chars()
         .map(|c| if "<>:\"/\\|?*".contains(c) { '-' } else { c })
         .collect();
     let upload_filename = format!("{safe_filename}.mp3");
     let link = gdrive::upload_file(&cfg, &path, &upload_filename).await?;
-    let share_message = format!("{}\n{link}", display_name.trim());
+    let share_message = format!("{final_name}\n{link}");
     let whatsapp_url = format!(
         "https://wa.me/?text={}",
         urlencoding::encode(&share_message)
