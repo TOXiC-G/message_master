@@ -190,6 +190,60 @@ pub async fn create_folder(
     res.json::<DriveFolder>().await.map_err(|e| e.to_string())
 }
 
+/// Renames a Google Drive folder and returns the updated folder metadata.
+pub async fn rename_folder(
+    cfg: &AppConfig,
+    folder_id: &str,
+    new_name: &str,
+) -> Result<DriveFolder, String> {
+    let trimmed = new_name.trim();
+    if trimmed.is_empty() {
+        return Err("Folder name cannot be empty.".into());
+    }
+    let token = get_access_token(cfg).await?;
+    let url = format!(
+        "https://www.googleapis.com/drive/v3/files/{}?fields=id,name",
+        urlencoding::encode(folder_id)
+    );
+    let client = reqwest::Client::new();
+    let res = client
+        .patch(&url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "name": trimmed }))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to rename Drive folder: {e}"))?;
+
+    if !res.status().is_success() {
+        let err = res.text().await.unwrap_or_default();
+        return Err(format!("Drive rename error: {err}"));
+    }
+    res.json::<DriveFolder>().await.map_err(|e| e.to_string())
+}
+
+/// Moves a Google Drive folder to Trash (`trashed = true`) so accidental folders can be removed safely.
+pub async fn delete_folder(cfg: &AppConfig, folder_id: &str) -> Result<(), String> {
+    let token = get_access_token(cfg).await?;
+    let url = format!(
+        "https://www.googleapis.com/drive/v3/files/{}",
+        urlencoding::encode(folder_id)
+    );
+    let client = reqwest::Client::new();
+    let res = client
+        .patch(&url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "trashed": true }))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to delete Drive folder: {e}"))?;
+
+    if !res.status().is_success() {
+        let err = res.text().await.unwrap_or_default();
+        return Err(format!("Drive delete error: {err}"));
+    }
+    Ok(())
+}
+
 /// Uploads the mastered MP3 to the configured Google Drive folder and returns the shareable Drive URL.
 pub async fn upload_file(cfg: &AppConfig, file_path: &Path, upload_name: &str) -> Result<String, String> {
     let token = get_access_token(cfg).await?;

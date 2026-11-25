@@ -126,6 +126,18 @@ async fn create_drive_folder(
 }
 
 #[tauri::command]
+async fn rename_drive_folder(folder_id: String, new_name: String) -> Result<DriveFolder, String> {
+    let cfg = AppConfig::load();
+    gdrive::rename_folder(&cfg, &folder_id, &new_name).await
+}
+
+#[tauri::command]
+async fn delete_drive_folder(folder_id: String) -> Result<(), String> {
+    let cfg = AppConfig::load();
+    gdrive::delete_folder(&cfg, &folder_id).await
+}
+
+#[tauri::command]
 async fn process_and_upload(
     app: AppHandle,
     input_path: String,
@@ -291,6 +303,8 @@ fn main() {
             connect_google_drive,
             list_drive_folders,
             create_drive_folder,
+            rename_drive_folder,
+            delete_drive_folder,
             process_and_upload
         ])
         .run(tauri::generate_context!())

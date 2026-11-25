@@ -1,6 +1,6 @@
 [package]
 name = "message_master"
-version = "1.0.0"
+version = "1.0.1"
 description = "Minimal-footprint audio mastering, Google Drive upload & WhatsApp sharing tool"
 authors = ["MessageMaster"]
 edition = "2021"

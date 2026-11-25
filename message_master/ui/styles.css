@@ -660,13 +660,25 @@ body {
   flex-direction: column;
 }
 
+.folder-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #f1f5f9;
+  padding-right: 6px;
+}
+
+.folder-row:hover {
+  background: var(--color-muted);
+}
+
 .folder-item {
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 9px 12px;
   border: none;
-  border-bottom: 1px solid #f1f5f9;
   background: transparent;
   color: var(--color-fg);
   font-family: inherit;
@@ -674,11 +686,47 @@ body {
   font-weight: 500;
   text-align: left;
   cursor: pointer;
-  transition: background 120ms ease;
+  min-width: 0;
 }
 
-.folder-item:hover {
-  background: var(--color-muted);
+.folder-item span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folder-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.65;
+  transition: opacity 120ms ease;
+}
+
+.folder-row:hover .folder-actions {
+  opacity: 1;
+}
+
+.folder-action-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--color-muted-fg);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.folder-action-btn:hover {
+  background: #e2e8f0;
+  color: var(--color-fg);
+}
+
+.folder-action-btn.danger:hover {
+  background: #fee2e2;
+  color: var(--color-danger);
 }
 
 .folder-empty {

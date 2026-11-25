@@ -250,6 +250,9 @@ async function renderDriveFolder(parentId) {
     }
     driveFolderList.innerHTML = "";
     for (const f of folders) {
+      const row = document.createElement("div");
+      row.className = "folder-row";
+
       const btn = document.createElement("button");
       btn.className = "folder-item";
       btn.type = "button";
@@ -264,7 +267,54 @@ async function renderDriveFolder(parentId) {
         driveNavStack.push({ id: f.id, name: f.name });
         renderDriveFolder(f.id);
       });
-      driveFolderList.appendChild(btn);
+
+      const actions = document.createElement("div");
+      actions.className = "folder-actions";
+
+      const renameBtn = document.createElement("button");
+      renameBtn.className = "folder-action-btn";
+      renameBtn.type = "button";
+      renameBtn.title = "Rename folder";
+      renameBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>`;
+      renameBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const nextName = window.prompt("Rename folder to:", f.name);
+        if (!nextName || !nextName.trim() || nextName.trim() === f.name) return;
+        driveBrowserStatus.textContent = "Renaming...";
+        try {
+          await invoke("rename_drive_folder", { folderId: f.id, newName: nextName.trim() });
+          const current = driveNavStack[driveNavStack.length - 1];
+          await renderDriveFolder(current.id);
+          driveBrowserStatus.textContent = `Renamed to "${nextName.trim()}"`;
+        } catch (err) {
+          driveBrowserStatus.textContent = String(err);
+        }
+      });
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "folder-action-btn danger";
+      deleteBtn.type = "button";
+      deleteBtn.title = "Move folder to Trash";
+      deleteBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>`;
+      deleteBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (!window.confirm(`Move "${f.name}" to Google Drive Trash?`)) return;
+        driveBrowserStatus.textContent = "Moving to Trash...";
+        try {
+          await invoke("delete_drive_folder", { folderId: f.id });
+          const current = driveNavStack[driveNavStack.length - 1];
+          await renderDriveFolder(current.id);
+          driveBrowserStatus.textContent = `Moved "${f.name}" to Trash`;
+        } catch (err) {
+          driveBrowserStatus.textContent = String(err);
+        }
+      });
+
+      actions.appendChild(renameBtn);
+      actions.appendChild(deleteBtn);
+      row.appendChild(btn);
+      row.appendChild(actions);
+      driveFolderList.appendChild(row);
     }
   } catch (err) {
     driveFolderList.innerHTML = `<div class="folder-empty" style="color:#dc2626;">${String(err)}</div>`;
