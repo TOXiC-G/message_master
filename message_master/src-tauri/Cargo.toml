@@ -1,0 +1,32 @@
+[package]
+name = "message_master"
+version = "1.0.0"
+description = "Minimal-footprint audio mastering, Google Drive upload & WhatsApp sharing tool"
+authors = ["MessageMaster"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+quick-xml = "0.36"
+rustfft = "6"
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+urlencoding = "2"
+semver = "1"
+dirs = "5"
+chrono = "0.4"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

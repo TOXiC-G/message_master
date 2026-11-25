@@ -1,0 +1,289 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod aup3;
+mod config;
+mod dsp;
+mod gdrive;
+mod updater;
+
+use config::AppConfig;
+use gdrive::DriveFolder;
+use serde::Serialize;
+use std::path::{Path, PathBuf};
+use tauri::{AppHandle, Emitter, Manager};
+
+#[derive(Debug, Clone, Serialize)]
+struct ProgressEvent {
+    step: u8,
+    label: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessResult {
+    display_name: String,
+    output_path: String,
+    output_size_mb: f64,
+    bitrate_kbps: u32,
+    clicks_repaired: usize,
+    silences_trimmed: usize,
+    seconds_trimmed: f64,
+    original_duration_s: f64,
+    mastered_duration_s: f64,
+    initial_lufs: f64,
+    final_lufs: f64,
+    drive_link: Option<String>,
+    drive_error: Option<String>,
+    share_message: String,
+    whatsapp_url: String,
+}
+
+fn emit_progress(app: &AppHandle, step: u8, label: &str) {
+    let _ = app.emit(
+        "mastering-progress",
+        ProgressEvent {
+            step,
+            label: label.to_string(),
+        },
+    );
+}
+
+fn resolve_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Ok(exe_dir) = std::env::current_exe() {
+        if let Some(dir) = exe_dir.parent() {
+            for name in ["ffmpeg.exe", "ffmpeg-x86_64-pc-windows-msvc.exe", "ffmpeg"] {
+                let p = dir.join(name);
+                if p.exists() {
+                    return Ok(p);
+                }
+            }
+        }
+    }
+    if let Ok(res_dir) = app.path().resource_dir() {
+        for name in [
+            "binaries/ffmpeg.exe",
+            "binaries/ffmpeg-x86_64-pc-windows-msvc.exe",
+            "ffmpeg.exe",
+        ] {
+            let p = res_dir.join(name);
+            if p.exists() {
+                return Ok(p);
+            }
+        }
+    }
+    let dev_bin = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("binaries")
+        .join("ffmpeg-x86_64-pc-windows-msvc.exe");
+    if dev_bin.exists() {
+        return Ok(dev_bin);
+    }
+    Err("Bundled FFmpeg sidecar not found.".into())
+}
+
+#[tauri::command]
+fn get_config() -> AppConfig {
+    AppConfig::load()
+}
+
+#[tauri::command]
+fn save_config(cfg: AppConfig) -> Result<(), String> {
+    cfg.save()
+}
+
+#[tauri::command]
+fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[tauri::command]
+async fn connect_google_drive(cfg: AppConfig) -> Result<String, String> {
+    let mut updated = cfg;
+    updated.save()?;
+    gdrive::connect_oauth(&mut updated).await
+}
+
+#[tauri::command]
+async fn list_drive_folders(parent_id: Option<String>) -> Result<Vec<DriveFolder>, String> {
+    let cfg = AppConfig::load();
+    gdrive::list_folders(&cfg, parent_id.as_deref()).await
+}
+
+#[tauri::command]
+async fn create_drive_folder(
+    parent_id: Option<String>,
+    name: String,
+) -> Result<DriveFolder, String> {
+    let cfg = AppConfig::load();
+    gdrive::create_folder(&cfg, parent_id.as_deref(), &name).await
+}
+
+#[tauri::command]
+async fn process_and_upload(
+    app: AppHandle,
+    input_path: String,
+    custom_name: Option<String>,
+    upload_to_drive: bool,
+) -> Result<ProcessResult, String> {
+    let in_path = PathBuf::from(&input_path);
+    if !in_path.exists() {
+        return Err("Selected file does not exist.".into());
+    }
+
+    let cfg = AppConfig::load();
+    let ffmpeg = resolve_ffmpeg(&app)?;
+
+    let raw_stem = in_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Message Audio")
+        .to_string();
+    let default_name = raw_stem
+        .strip_suffix(".mp3")
+        .unwrap_or(&raw_stem)
+        .trim()
+        .to_string();
+
+    let display_name = custom_name
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(default_name);
+
+    // Sanitize filename for filesystem while keeping display_name intact for message text
+    let safe_filename: String = display_name
+        .chars()
+        .map(|c| if "<>:\"/\\|?*".contains(c) { '-' } else { c })
+        .collect();
+
+    let out_dir = in_path.parent().unwrap_or_else(|| Path::new("."));
+    let out_path = out_dir.join(format!("{safe_filename}_MASTERED.mp3"));
+
+    let app_clone = app.clone();
+    let in_path_clone = in_path.clone();
+    let out_path_clone = out_path.clone();
+    let ffmpeg_clone = ffmpeg.clone();
+    let max_mb = cfg.max_size_mb;
+    let target_lufs = cfg.target_lufs;
+
+    let stats = tokio::task::spawn_blocking(move || -> Result<dsp::MasteringStats, String> {
+        emit_progress(&app_clone, 1, "Reading audio track...");
+        let ext = in_path_clone
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        let (mut samples, sr) = if ext == "aup3" {
+            let (raw, native_sr) = aup3::read_aup3_mono(&in_path_clone)?;
+            if native_sr != 44100 {
+                (dsp::resample_via_ffmpeg(&ffmpeg_clone, &raw, native_sr, 44100)?, 44100)
+            } else {
+                (raw, native_sr)
+            }
+        } else {
+            dsp::decode_via_ffmpeg(&ffmpeg_clone, &in_path_clone)?
+        };
+
+        let original_duration_s = samples.len() as f64 / sr as f64;
+        let initial_lufs = dsp::measure_lufs(&samples, sr as f32);
+
+        emit_progress(&app_clone, 2, "Removing clicks & shaping vocal EQ...");
+        let clicks_repaired = dsp::dual_pass_declick(&mut samples, sr);
+        dsp::apply_sermon_eq(&mut samples, sr as f32);
+
+        emit_progress(&app_clone, 3, "Reducing noise & electronic whine...");
+        dsp::apply_spectral_noise_reduction(&mut samples, sr, 0.85);
+
+        emit_progress(&app_clone, 4, "Truncating long silences (> 5.5s -> 2.0s)...");
+        let (mut samples, silences_trimmed, seconds_trimmed) =
+            dsp::truncate_long_silences(samples, sr, -49.0, 5.5, 2.0);
+
+        emit_progress(&app_clone, 5, "Mastering dynamics & exporting under 30 MB...");
+        dsp::apply_compressor(&mut samples, sr as f32);
+        let (final_lufs, final_peak_db) =
+            dsp::normalize_and_limit(&mut samples, sr as f32, target_lufs, -1.5);
+
+        let (bytes, bitrate_kbps) =
+            dsp::encode_under_max_mb(&ffmpeg_clone, &samples, sr, &out_path_clone, max_mb)?;
+
+        Ok(dsp::MasteringStats {
+            original_duration_s,
+            mastered_duration_s: samples.len() as f64 / sr as f64,
+            clicks_repaired,
+            silences_trimmed,
+            seconds_trimmed,
+            initial_lufs,
+            final_lufs,
+            final_peak_db,
+            output_path: out_path_clone.to_string_lossy().to_string(),
+            output_size_mb: bytes as f64 / (1000.0 * 1000.0),
+            bitrate_kbps,
+        })
+    })
+    .await
+    .map_err(|e| format!("Processing thread error: {e}"))??;
+
+    let mut drive_link: Option<String> = None;
+    let mut drive_error: Option<String> = None;
+
+    if upload_to_drive {
+        emit_progress(&app, 6, "Uploading mastered MP3 to Google Drive...");
+        let upload_filename = format!("{safe_filename}.mp3");
+        match gdrive::upload_file(&cfg, &out_path, &upload_filename).await {
+            Ok(link) => drive_link = Some(link),
+            Err(e) => drive_error = Some(e),
+        }
+    }
+
+    let share_message = match &drive_link {
+        Some(link) => format!("{display_name}\n{link}"),
+        None => format!("{display_name}\n{}", stats.output_path),
+    };
+    let whatsapp_url = format!(
+        "https://wa.me/?text={}",
+        urlencoding::encode(&share_message)
+    );
+
+    Ok(ProcessResult {
+        display_name,
+        output_path: stats.output_path,
+        output_size_mb: stats.output_size_mb,
+        bitrate_kbps: stats.bitrate_kbps,
+        clicks_repaired: stats.clicks_repaired,
+        silences_trimmed: stats.silences_trimmed,
+        seconds_trimmed: stats.seconds_trimmed,
+        original_duration_s: stats.original_duration_s,
+        mastered_duration_s: stats.mastered_duration_s,
+        initial_lufs: stats.initial_lufs,
+        final_lufs: stats.final_lufs,
+        drive_link,
+        drive_error,
+        share_message,
+        whatsapp_url,
+    })
+}
+
+fn main() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let cfg = AppConfig::load();
+                if let Some(info) = updater::check_for_update(&cfg.update_manifest_url).await {
+                    let _ = handle.emit("update-available", info);
+                }
+            });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            get_config,
+            save_config,
+            get_app_version,
+            connect_google_drive,
+            list_drive_folders,
+            create_drive_folder,
+            process_and_upload
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running MessageMaster");
+}

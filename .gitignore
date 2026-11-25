@@ -1,0 +1,22 @@
+# Temporary / local analysis archive
+archive/
+sermon_master/
+
+# Python / Agent tooling
+.venv/
+.agent/
+__pycache__/
+
+# Rust / Tauri build artifacts & large binaries (>100MB FFmpeg sidecar)
+message_master/src-tauri/target/
+message_master/src-tauri/gen/
+message_master/src-tauri/binaries/*.exe
+*.exe
+
+# Audio & project files
+*.mp3
+*.mpeg
+*.wav
+*.aup3
+*.aup3-wal
+*.aup3-shm
