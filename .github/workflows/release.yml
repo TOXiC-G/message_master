@@ -1,0 +1,48 @@
+name: Release MessageMaster
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: message_master/src-tauri
+
+      - name: Download FFmpeg sidecar
+        shell: pwsh
+        run: |
+          $zipPath = "$env:TEMP\ffmpeg.zip"
+          $extractDir = "$env:TEMP\ffmpeg_extract"
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+          $ffmpegExe = Get-ChildItem -Path $extractDir -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path "message_master/src-tauri/binaries" | Out-Null
+          Copy-Item $ffmpegExe.FullName "message_master/src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe" -Force
+
+      - name: Build and Release with Tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: message_master
+          tagName: v__VERSION__
+          releaseName: "MessageMaster v__VERSION__"
+          releaseBody: "Automated Windows release of MessageMaster (includes bundled FFmpeg sidecar)."
+          releaseDraft: false
+          prerelease: false
