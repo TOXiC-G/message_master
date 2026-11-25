@@ -272,8 +272,16 @@ fn extract_query_param(http_first_line: &str, key: &str) -> Option<String> {
 fn open_browser(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", url])
+        // Use PowerShell Start-Process with single-quoted URL so `&` in query params is never split by cmd.exe
+        let escaped = url.replace('\'', "''");
+        std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                &format!("Start-Process '{escaped}'"),
+            ])
             .spawn()
             .map_err(|e| format!("Failed to open browser: {e}"))?;
     }
