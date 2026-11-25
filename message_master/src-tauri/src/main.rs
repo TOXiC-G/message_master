@@ -268,8 +268,7 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let cfg = AppConfig::load();
-                if let Some(info) = updater::check_for_update(&cfg.update_manifest_url).await {
+                if let Some(info) = updater::check_for_update().await {
                     let _ = handle.emit("update-available", info);
                 }
             });

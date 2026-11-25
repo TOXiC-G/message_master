@@ -13,7 +13,6 @@ pub struct AppConfig {
     pub max_size_mb: f64,
     pub target_lufs: f64,
     pub make_public_link: bool,
-    pub update_manifest_url: String,
 }
 
 impl Default for AppConfig {
@@ -27,7 +26,6 @@ impl Default for AppConfig {
             max_size_mb: 30.0,
             target_lufs: -16.0,
             make_public_link: true,
-            update_manifest_url: "https://api.github.com/repos/TOXiC-G/message_master/releases/latest".into(),
         }
     }
 }

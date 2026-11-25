@@ -74,7 +74,6 @@ function applyConfigToUI(cfg) {
   document.getElementById("cfgMaxMb").value = cfg.max_size_mb ?? 30;
   document.getElementById("cfgLufs").value = cfg.target_lufs ?? -16;
   document.getElementById("cfgPublicLink").checked = cfg.make_public_link ?? true;
-  document.getElementById("cfgUpdateUrl").value = cfg.update_manifest_url || "";
 
   if (cfg.drive_folder_name) {
     destFolderName.textContent = cfg.drive_folder_name;
@@ -100,7 +99,6 @@ function readConfigFromUI(existing) {
     max_size_mb: parseFloat(document.getElementById("cfgMaxMb").value) || 30.0,
     target_lufs: parseFloat(document.getElementById("cfgLufs").value) || -16.0,
     make_public_link: document.getElementById("cfgPublicLink").checked,
-    update_manifest_url: document.getElementById("cfgUpdateUrl").value.trim(),
   };
 }
 

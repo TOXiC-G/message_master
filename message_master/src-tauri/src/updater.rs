@@ -16,13 +16,12 @@ struct ManifestOrRelease {
     url: Option<String>,
 }
 
-/// Unobtrusively checks the configured manifest/GitHub release endpoint with a short timeout.
+const RELEASE_URL: &str = "https://api.github.com/repos/TOXiC-G/message_master/releases/latest";
+
+/// Unobtrusively checks the GitHub releases endpoint with a short timeout.
 /// Returns `Some(UpdateInfo)` only if a strictly newer semver release exists; silent otherwise.
-pub async fn check_for_update(manifest_url: &str) -> Option<UpdateInfo> {
-    let url = manifest_url.trim();
-    if url.is_empty() {
-        return None;
-    }
+pub async fn check_for_update() -> Option<UpdateInfo> {
+    let url = RELEASE_URL;
 
     let current_str = env!("CARGO_PKG_VERSION");
     let current_ver = Version::parse(current_str).ok()?;
