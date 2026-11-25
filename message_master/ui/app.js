@@ -50,6 +50,8 @@ const closeSettingsBtn = document.getElementById("closeSettingsBtn");
 const saveSettingsBtn = document.getElementById("saveSettingsBtn");
 const connectDriveBtn = document.getElementById("connectDriveBtn");
 const oauthStatus = document.getElementById("oauthStatus");
+const checkUpdatesBtn = document.getElementById("checkUpdatesBtn");
+const updateCheckStatus = document.getElementById("updateCheckStatus");
 
 // Window Controls
 document.getElementById("minBtn").addEventListener("click", () => appWindow.minimize());
@@ -360,6 +362,23 @@ connectDriveBtn.addEventListener("click", async () => {
   } catch (err) {
     oauthStatus.textContent = String(err);
     oauthStatus.classList.remove("connected");
+  }
+});
+
+checkUpdatesBtn.addEventListener("click", async () => {
+  updateCheckStatus.textContent = "Checking...";
+  updateCheckStatus.classList.remove("connected");
+  try {
+    const info = await invoke("check_updates_now");
+    if (info) {
+      updateCheckStatus.textContent = `Update available: v${info.latest_version}`;
+      updateCheckStatus.classList.add("connected");
+    } else {
+      const ver = await invoke("get_app_version");
+      updateCheckStatus.textContent = `You're up to date (v${ver})`;
+    }
+  } catch (err) {
+    updateCheckStatus.textContent = "Could not check for updates.";
   }
 });
 

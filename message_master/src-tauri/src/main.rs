@@ -95,6 +95,15 @@ fn get_app_version() -> String {
 }
 
 #[tauri::command]
+async fn check_updates_now(app: AppHandle) -> Option<updater::UpdateInfo> {
+    let res = updater::check_for_update().await;
+    if let Some(ref info) = res {
+        let _ = app.emit("update-available", info.clone());
+    }
+    res
+}
+
+#[tauri::command]
 async fn connect_google_drive(cfg: AppConfig) -> Result<String, String> {
     let mut updated = cfg;
     updated.save()?;
@@ -278,6 +287,7 @@ fn main() {
             get_config,
             save_config,
             get_app_version,
+            check_updates_now,
             connect_google_drive,
             list_drive_folders,
             create_drive_folder,
