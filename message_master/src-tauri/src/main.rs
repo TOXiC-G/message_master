@@ -320,6 +320,8 @@ async fn upload_mastered_file(
     file_path: String,
     display_name: String,
     drive_name: Option<String>,
+    drive_mode: Option<String>,
+    save_date: Option<String>,
 ) -> Result<UploadResult, String> {
     let cfg = AppConfig::load();
     let path = PathBuf::from(&file_path);
@@ -336,7 +338,14 @@ async fn upload_mastered_file(
         .map(|c| if "<>:\"/\\|?*".contains(c) { '-' } else { c })
         .collect();
     let upload_filename = format!("{safe_filename}.mp3");
-    let link = gdrive::upload_file(&cfg, &path, &upload_filename).await?;
+    let link = gdrive::upload_file(
+        &cfg,
+        &path,
+        &upload_filename,
+        drive_mode.as_deref(),
+        save_date.as_deref(),
+    )
+    .await?;
     let share_message = format!("{final_name}\n{link}");
     let whatsapp_url = format!(
         "https://wa.me/?text={}",

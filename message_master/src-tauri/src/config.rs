@@ -11,6 +11,8 @@ pub struct AppConfig {
     pub local_output_dir: String,
     #[serde(default = "default_save_mode")]
     pub save_mode: String,
+    #[serde(default = "default_save_mode")]
+    pub drive_save_mode: String,
     pub oauth_client_id: String,
     pub oauth_client_secret: String,
     pub refresh_token: Option<String>,
@@ -30,6 +32,7 @@ impl Default for AppConfig {
             drive_folder_name: String::new(),
             local_output_dir: String::new(),
             save_mode: default_save_mode(),
+            drive_save_mode: default_save_mode(),
             oauth_client_id: String::new(),
             oauth_client_secret: String::new(),
             refresh_token: None,

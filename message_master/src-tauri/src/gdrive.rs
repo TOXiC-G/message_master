@@ -244,14 +244,74 @@ pub async fn delete_folder(cfg: &AppConfig, folder_id: &str) -> Result<(), Strin
     Ok(())
 }
 
-/// Uploads the mastered MP3 to the configured Google Drive folder and returns the shareable Drive URL.
-pub async fn upload_file(cfg: &AppConfig, file_path: &Path, upload_name: &str) -> Result<String, String> {
+/// Finds an existing subfolder by exact name inside `parent_id`, or creates it if missing.
+pub async fn find_or_create_folder(
+    cfg: &AppConfig,
+    parent_id: Option<&str>,
+    name: &str,
+) -> Result<DriveFolder, String> {
+    let trimmed = name.trim();
+    let token = get_access_token(cfg).await?;
+    let parent = parent_id.filter(|s| !s.trim().is_empty()).unwrap_or("root");
+    let escaped_name = trimmed.replace('\'', "\\'");
+    let query = format!(
+        "'{parent}' in parents and name='{escaped_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    );
+    let url = format!(
+        "https://www.googleapis.com/drive/v3/files?q={}&fields=files(id,name)&pageSize=1",
+        urlencoding::encode(&query)
+    );
+    let client = reqwest::Client::new();
+    let res = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to search Drive folder: {e}"))?;
+
+    if res.status().is_success() {
+        if let Ok(list) = res.json::<DriveListResponse>().await {
+            if let Some(found) = list.files.into_iter().next() {
+                return Ok(found);
+            }
+        }
+    }
+    create_folder(cfg, Some(parent), trimmed).await
+}
+
+/// Uploads the mastered MP3 to the configured Google Drive folder (supporting Direct or Base Year/Month mode)
+/// and returns the shareable Drive URL.
+pub async fn upload_file(
+    cfg: &AppConfig,
+    file_path: &Path,
+    upload_name: &str,
+    drive_mode: Option<&str>,
+    save_date: Option<&str>,
+) -> Result<String, String> {
     let token = get_access_token(cfg).await?;
     let bytes = tokio::fs::read(file_path)
         .await
         .map_err(|e| format!("Failed to read MP3 for upload: {e}"))?;
 
-    let metadata = if let Some(fid) = cfg.folder_id() {
+    let mode = drive_mode
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| cfg.drive_save_mode.to_lowercase());
+
+    let mut target_parent = cfg.folder_id();
+    if mode == "base" {
+        let parsed_date = save_date
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok())
+            .unwrap_or_else(|| chrono::Local::now().date_naive());
+        let year_str = parsed_date.format("%Y").to_string();
+        let month_str = parsed_date.format("%B").to_string();
+
+        let year_folder = find_or_create_folder(cfg, target_parent.as_deref(), &year_str).await?;
+        let month_folder = find_or_create_folder(cfg, Some(&year_folder.id), &month_str).await?;
+        target_parent = Some(month_folder.id);
+    }
+
+    let metadata = if let Some(fid) = target_parent {
         serde_json::json!({
             "name": upload_name,
             "parents": [fid]

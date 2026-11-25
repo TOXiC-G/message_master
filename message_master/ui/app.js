@@ -28,6 +28,12 @@ const basePathHint = document.getElementById("basePathHint");
 const localDirTitle = document.getElementById("localDirTitle");
 const driveNameField = document.getElementById("driveNameField");
 const driveNameInput = document.getElementById("driveNameInput");
+const driveDestPanel = document.getElementById("driveDestPanel");
+const driveModeDirectBtn = document.getElementById("driveModeDirectBtn");
+const driveModeBaseBtn = document.getElementById("driveModeBaseBtn");
+const driveDateInput = document.getElementById("driveDateInput");
+const driveBasePathHint = document.getElementById("driveBasePathHint");
+const driveDirTitle = document.getElementById("driveDirTitle");
 const destFolderName = document.getElementById("destFolderName");
 const browseDriveBtn = document.getElementById("browseDriveBtn");
 const startBtn = document.getElementById("startBtn");
@@ -96,8 +102,24 @@ function updateSaveModeUI(mode) {
   }
 }
 
+function updateDriveModeUI(mode) {
+  const isBase = mode === "base";
+  driveModeDirectBtn.classList.toggle("active", !isBase);
+  driveModeBaseBtn.classList.toggle("active", isBase);
+  driveDateInput.classList.toggle("hidden", !isBase);
+  driveBasePathHint.classList.toggle("hidden", !isBase);
+  driveDirTitle.textContent = isBase ? "Drive Base Folder (Year / Month)" : "Google Drive Destination";
+  if (isBase && driveDateInput.value) {
+    const [y, m] = driveDateInput.value.split("-").map(Number);
+    const dt = new Date(y, m - 1, 1);
+    const monthName = dt.toLocaleString("en-US", { month: "long" });
+    driveBasePathHint.textContent = `Uploads into: <Drive Folder> / ${y} / ${monthName} /`;
+  }
+}
+
 async function init() {
   saveDateInput.value = getTodayLocalISO();
+  driveDateInput.value = getTodayLocalISO();
   try {
     const ver = await invoke("get_app_version");
     document.getElementById("appVersion").textContent = `v${ver}`;
@@ -132,6 +154,7 @@ function applyConfigToUI(cfg) {
     localOutputLabel.title = "";
   }
   updateSaveModeUI(cfg.save_mode || "direct");
+  updateDriveModeUI(cfg.drive_save_mode || "direct");
 
   const connected = Boolean(cfg.refresh_token);
   driveStatusDot.classList.toggle("connected", connected);
@@ -146,6 +169,7 @@ function readConfigFromUI(existing) {
     drive_folder_name: existing.drive_folder_name || "",
     local_output_dir: existing.local_output_dir || "",
     save_mode: existing.save_mode || "direct",
+    drive_save_mode: existing.drive_save_mode || "direct",
     oauth_client_id: document.getElementById("cfgClientId").value.trim(),
     oauth_client_secret: document.getElementById("cfgClientSecret").value.trim(),
     refresh_token: existing.refresh_token,
@@ -228,6 +252,24 @@ modeBaseBtn.addEventListener("click", () => setSaveMode("base"));
 saveDateInput.addEventListener("change", async () => {
   const cfg = await invoke("get_config");
   updateSaveModeUI(cfg.save_mode || "direct");
+  if (saveDateInput.value) {
+    driveDateInput.value = saveDateInput.value;
+    updateDriveModeUI(cfg.drive_save_mode || "direct");
+  }
+});
+
+async function setDriveMode(mode) {
+  const existing = await invoke("get_config");
+  const updated = { ...existing, drive_save_mode: mode };
+  await invoke("save_config", { cfg: updated });
+  updateDriveModeUI(mode);
+}
+
+driveModeDirectBtn.addEventListener("click", () => setDriveMode("direct"));
+driveModeBaseBtn.addEventListener("click", () => setDriveMode("base"));
+driveDateInput.addEventListener("change", async () => {
+  const cfg = await invoke("get_config");
+  updateDriveModeUI(cfg.drive_save_mode || "direct");
 });
 
 // Progress listener
@@ -291,9 +333,10 @@ startBtn.addEventListener("click", async () => {
 
     lastOutputPath = res.output_path;
     lastDisplayName = res.display_name;
+    driveDestPanel.classList.remove("hidden");
     driveNameField.classList.remove("hidden");
     driveNameInput.value = res.display_name;
-    shareTitle.textContent = "Saved to Disk — Ready to Upload";
+    shareTitle.textContent = "Saved to Disk — Choose Drive Folder & Upload";
     shareMessage.value = res.share_message;
     currentWhatsappUrl = res.whatsapp_url;
     driveWarn.classList.add("hidden");
@@ -318,14 +361,18 @@ uploadDriveBtn.addEventListener("click", async () => {
   driveWarn.classList.add("hidden");
 
   try {
+    const cfg = await invoke("get_config");
     const res = await invoke("upload_mastered_file", {
       filePath: lastOutputPath,
       displayName: lastDisplayName,
       driveName: driveNameInput.value.trim() || null,
+      driveMode: cfg.drive_save_mode || "direct",
+      saveDate: driveDateInput.value || null,
     });
     shareTitle.textContent = "Uploaded to Google Drive — Ready to Share";
     shareMessage.value = res.share_message;
     currentWhatsappUrl = res.whatsapp_url;
+    driveDestPanel.classList.add("hidden");
     driveNameField.classList.add("hidden");
     uploadDriveBtn.classList.add("hidden");
     whatsappBtn.classList.remove("hidden");

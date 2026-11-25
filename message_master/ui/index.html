@@ -68,16 +68,16 @@
       </div>
     </section>
 
-    <!-- Message Name Override & Local/Drive Destinations -->
-    <section class="card config-strip">
-      <div class="field" style="grid-column: 1 / -1;">
+    <!-- Message Name Override & Local Save Destination -->
+    <section class="card config-strip" style="grid-template-columns: 1fr;">
+      <div class="field">
         <label for="customNameInput">Message / File Name (editable)</label>
         <input type="text" id="customNameInput" placeholder="Auto-filled when you pick a file..." />
       </div>
       <div class="field">
         <div class="label-row">
           <label id="localDirTitle">Save to Local Folder</label>
-          <div class="mode-pills" role="group" aria-label="Save mode">
+          <div class="mode-pills" role="group" aria-label="Local save mode">
             <button type="button" class="mode-pill active" id="modeDirectBtn">Direct</button>
             <button type="button" class="mode-pill" id="modeBaseBtn">Base Folder</button>
           </div>
@@ -90,13 +90,6 @@
           <input type="date" id="saveDateInput" class="date-input hidden" title="Folder Year/Month date" />
         </div>
         <span class="path-hint hidden" id="basePathHint"></span>
-      </div>
-      <div class="field drive-dest-field">
-        <label>Google Drive Destination</label>
-        <div class="dest-picker">
-          <span class="dest-name" id="destFolderName">My Drive (Root)</span>
-          <button class="btn-chip" id="browseDriveBtn" type="button">Browse</button>
-        </div>
       </div>
     </section>
 
@@ -153,8 +146,25 @@
 
       <div class="share-box">
         <div class="share-header">
-          <span class="share-title" id="shareTitle">Saved to Disk — Ready to Upload</span>
+          <span class="share-title" id="shareTitle">Saved to Disk — Choose Drive Folder &amp; Upload</span>
           <span class="drive-warn hidden" id="driveWarn"></span>
+        </div>
+        <div class="field" id="driveDestPanel">
+          <div class="label-row">
+            <label id="driveDirTitle">Google Drive Destination</label>
+            <div class="mode-pills" role="group" aria-label="Drive save mode">
+              <button type="button" class="mode-pill active" id="driveModeDirectBtn">Direct</button>
+              <button type="button" class="mode-pill" id="driveModeBaseBtn">Base Folder</button>
+            </div>
+          </div>
+          <div class="dir-date-row">
+            <div class="dest-picker" style="flex: 1; min-width: 0;">
+              <span class="dest-name" id="destFolderName">My Drive (Root)</span>
+              <button class="btn-chip" id="browseDriveBtn" type="button">Choose Folder</button>
+            </div>
+            <input type="date" id="driveDateInput" class="date-input hidden" title="Drive Folder Year/Month date" />
+          </div>
+          <span class="path-hint hidden" id="driveBasePathHint"></span>
         </div>
         <div class="field" id="driveNameField">
           <label for="driveNameInput">Google Drive Upload Name (defaults to same name)</label>
