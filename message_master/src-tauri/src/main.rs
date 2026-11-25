@@ -96,11 +96,18 @@ fn get_app_version() -> String {
 
 #[tauri::command]
 async fn check_updates_now(app: AppHandle) -> Option<updater::UpdateInfo> {
-    let res = updater::check_for_update().await;
+    let res = updater::check_and_download_update().await;
     if let Some(ref info) = res {
         let _ = app.emit("update-available", info.clone());
     }
     res
+}
+
+#[tauri::command]
+fn install_update_and_restart(app: AppHandle, installer_path: String) -> Result<(), String> {
+    updater::run_installer_and_restart(&installer_path)?;
+    app.exit(0);
+    Ok(())
 }
 
 #[tauri::command]
@@ -289,7 +296,7 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Some(info) = updater::check_for_update().await {
+                if let Some(info) = updater::check_and_download_update().await {
                     let _ = handle.emit("update-available", info);
                 }
             });
@@ -300,6 +307,7 @@ fn main() {
             save_config,
             get_app_version,
             check_updates_now,
+            install_update_and_restart,
             connect_google_drive,
             list_drive_folders,
             create_drive_folder,

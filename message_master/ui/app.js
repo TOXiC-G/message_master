@@ -9,6 +9,7 @@ const appWindow = getCurrentWindow();
 let selectedPath = null;
 let currentWhatsappUrl = "";
 let updateReleaseUrl = "";
+let updateInstallerPath = null;
 let driveNavStack = [{ id: "root", name: "My Drive" }];
 
 // Elements
@@ -169,13 +170,20 @@ listen("mastering-progress", (event) => {
 listen("update-available", (event) => {
   const info = event.payload;
   const badge = document.getElementById("updateBadge");
-  document.getElementById("updateText").textContent = `Update available (v${info.latest_version})`;
   updateReleaseUrl = info.release_url;
+  updateInstallerPath = info.installer_path || null;
+  document.getElementById("updateText").textContent = updateInstallerPath
+    ? `Restart to update (v${info.latest_version})`
+    : `Update available (v${info.latest_version})`;
   badge.classList.remove("hidden");
 });
 
-document.getElementById("updateBadge").addEventListener("click", () => {
-  if (updateReleaseUrl) openShell(updateReleaseUrl);
+document.getElementById("updateBadge").addEventListener("click", async () => {
+  if (updateInstallerPath) {
+    await invoke("install_update_and_restart", { installerPath: updateInstallerPath });
+  } else if (updateReleaseUrl) {
+    openShell(updateReleaseUrl);
+  }
 });
 
 startBtn.addEventListener("click", async () => {
@@ -416,13 +424,17 @@ connectDriveBtn.addEventListener("click", async () => {
 });
 
 checkUpdatesBtn.addEventListener("click", async () => {
-  updateCheckStatus.textContent = "Checking...";
+  updateCheckStatus.textContent = "Checking & downloading...";
   updateCheckStatus.classList.remove("connected");
   try {
     const info = await invoke("check_updates_now");
     if (info) {
-      updateCheckStatus.textContent = `Update available: v${info.latest_version}`;
       updateCheckStatus.classList.add("connected");
+      if (info.installer_path) {
+        updateCheckStatus.textContent = `v${info.latest_version} ready — click the green pill in the title bar to restart & install.`;
+      } else {
+        updateCheckStatus.textContent = `Update available: v${info.latest_version}`;
+      }
     } else {
       const ver = await invoke("get_app_version");
       updateCheckStatus.textContent = `You're up to date (v${ver})`;
