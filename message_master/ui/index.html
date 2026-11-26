@@ -88,9 +88,7 @@
         <span class="db-readout" id="recDbReadout">-60.0 dB</span>
       </div>
 
-      <div class="vu-wrap" aria-label="Input level meter">
-        <div class="vu-fill" id="vuFill" style="width: 0%"></div>
-      </div>
+      <canvas id="liveWaveCanvas" class="live-wave-canvas" aria-label="Live microphone waveform"></canvas>
 
       <div class="rec-actions">
         <button class="btn-danger" id="recStartBtn" type="button">
@@ -103,13 +101,13 @@
       </div>
     </section>
 
-    <section class="card studio-card">
+    <section class="card studio-card meet-studio-card">
       <div class="rec-header">
         <div>
-          <h2 class="section-title">Embedded Google Meet</h2>
-          <p class="section-sub">Opens inside MessageMaster (no external Chrome needed)</p>
+          <h2 class="section-title">Google Meet</h2>
+          <p class="section-sub">Embedded directly inside MessageMaster</p>
         </div>
-        <button class="btn-secondary" id="openMeetBtn" type="button" style="flex:0 0 auto; padding: 8px 14px;">Open Meet Window</button>
+        <button class="btn-secondary" id="openMeetBtn" type="button" style="flex:0 0 auto; padding: 8px 14px;">Load Meet</button>
       </div>
 
       <div class="dir-date-row">
@@ -120,6 +118,9 @@
         <button class="btn-secondary" id="meetCamBtn" type="button">Toggle Camera</button>
         <button class="btn-primary" id="startServiceBtn" type="button">Start Service (Mic + Meet)</button>
         <button class="btn-secondary" id="stopServiceBtn" type="button">Stop Service</button>
+      </div>
+      <div id="meetEmbedHost" class="meet-embed-host">
+        <span>Click <strong>Load Meet</strong> above (or set your link in Settings) to display Google Meet here.</span>
       </div>
       <span class="path-hint" id="meetStatusHint"></span>
     </section>

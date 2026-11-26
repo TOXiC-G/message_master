@@ -41,6 +41,12 @@ function switchStage(name) {
   } else if (name !== "record" && !isRecording) {
     invoke("rec_monitor_stop").catch(() => {});
   }
+  if (typeof syncMeetBounds === "function") {
+    requestAnimationFrame(() => syncMeetBounds());
+  }
+  if (name === "record" && typeof meetLoaded !== "undefined" && !meetLoaded && meetUrlInput && meetUrlInput.value.trim()) {
+    requestAnimationFrame(() => loadEmbeddedMeet());
+  }
 }
 
 stageTabs.forEach((btn) => {
@@ -89,7 +95,9 @@ const micGainSlider = document.getElementById("micGainSlider");
 const micGainLabel = document.getElementById("micGainLabel");
 const recMonitorStatus = document.getElementById("recMonitorStatus");
 const recDbReadout = document.getElementById("recDbReadout");
-const vuFill = document.getElementById("vuFill");
+const liveWaveCanvas = document.getElementById("liveWaveCanvas");
+const liveWaveCtx = liveWaveCanvas ? liveWaveCanvas.getContext("2d") : null;
+const meetEmbedHost = document.getElementById("meetEmbedHost");
 const recTimer = document.getElementById("recTimer");
 const recStartBtn = document.getElementById("recStartBtn");
 const recStartText = document.getElementById("recStartText");
@@ -155,10 +163,53 @@ micGainSlider.addEventListener("change", async () => {
   } catch {}
 });
 
+const LIVE_WAVE_BARS = 140;
+let liveWaveHistory = new Array(LIVE_WAVE_BARS).fill(0.02);
+
+function drawLiveWaveform(paused, recording) {
+  if (!liveWaveCanvas || !liveWaveCtx) return;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = liveWaveCanvas.clientWidth || 720;
+  const cssH = liveWaveCanvas.clientHeight || 76;
+  const w = Math.floor(cssW * dpr);
+  const h = Math.floor(cssH * dpr);
+  if (liveWaveCanvas.width !== w || liveWaveCanvas.height !== h) {
+    liveWaveCanvas.width = w;
+    liveWaveCanvas.height = h;
+  }
+  const ctx = liveWaveCtx;
+  ctx.fillStyle = "#09090b";
+  ctx.fillRect(0, 0, w, h);
+
+  // Subtle center zero-line
+  ctx.strokeStyle = "rgba(255,255,255,0.08)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, h / 2);
+  ctx.lineTo(w, h / 2);
+  ctx.stroke();
+
+  const step = w / LIVE_WAVE_BARS;
+  const barW = Math.max(2 * dpr, step * 0.65);
+  ctx.fillStyle = paused ? "#f59e0b" : recording ? "#ef4444" : "#8b5cf6";
+
+  for (let i = 0; i < LIVE_WAVE_BARS; i++) {
+    const amp = liveWaveHistory[i] || 0.02;
+    const barH = Math.max(3 * dpr, amp * h * 0.88);
+    const x = i * step;
+    const y = (h - barH) / 2;
+    ctx.fillRect(x, y, barW, barH);
+  }
+}
+
 listen("rec-level", (e) => {
   const { rms_db, elapsed_s, paused, monitoring } = e.payload;
-  const pct = Math.max(0, Math.min(100, ((rms_db + 60) / 60) * 100));
-  vuFill.style.width = paused ? "0%" : `${pct}%`;
+  const norm = Math.max(0.02, Math.min(1, (rms_db + 60) / 60));
+  if (!paused) {
+    liveWaveHistory.push(norm);
+    if (liveWaveHistory.length > LIVE_WAVE_BARS) liveWaveHistory.shift();
+  }
+  drawLiveWaveform(paused, !monitoring && isRecording);
   recDbReadout.textContent = paused ? "Paused" : `${rms_db <= -89 ? "-∞" : rms_db.toFixed(1)} dB`;
   if (!monitoring) {
     recTimer.textContent = formatTimerHMS(elapsed_s);
@@ -184,7 +235,8 @@ async function startMicRecording() {
 
 function resetRecButtons() {
   isRecording = false;
-  vuFill.style.width = "0%";
+  liveWaveHistory.fill(0.02);
+  drawLiveWaveform(false, false);
   recTimer.textContent = "00:00:00";
   recStartBtn.classList.remove("hidden");
   recPauseBtn.classList.add("hidden");
@@ -246,11 +298,55 @@ async function saveMeetUrl() {
 
 meetUrlInput.addEventListener("change", saveMeetUrl);
 
-openMeetBtn.addEventListener("click", async () => {
+let meetLoaded = false;
+
+function isAnyModalOpen() {
+  const sOpen = settingsModal && !settingsModal.classList.contains("hidden");
+  const dOpen = driveModal && !driveModal.classList.contains("hidden");
+  return sOpen || dOpen;
+}
+
+function syncMeetBounds() {
+  if (!meetLoaded || !meetEmbedHost) return;
+  const visible = currentStage === "record" && !isAnyModalOpen();
+  const rect = meetEmbedHost.getBoundingClientRect();
+  invoke("set_meet_bounds", {
+    x: rect.left,
+    y: rect.top,
+    width: rect.width,
+    height: rect.height,
+    visible,
+  }).catch(() => {});
+}
+
+async function loadEmbeddedMeet() {
+  const url = meetUrlInput.value.trim();
+  if (!url) {
+    meetStatusHint.textContent = "Enter a Google Meet link first (or save one in Settings).";
+    return;
+  }
   await saveMeetUrl();
+  const rect = meetEmbedHost.getBoundingClientRect();
+  await invoke("embed_meet", {
+    url,
+    x: rect.left,
+    y: rect.top,
+    width: Math.max(200, rect.width),
+    height: Math.max(200, rect.height),
+  });
+  meetLoaded = true;
+  meetStatusHint.textContent = "Google Meet embedded. Sign in once if prompted — your session is saved.";
+  syncMeetBounds();
+}
+
+if (typeof ResizeObserver !== "undefined" && meetEmbedHost) {
+  new ResizeObserver(() => syncMeetBounds()).observe(meetEmbedHost);
+}
+window.addEventListener("resize", () => syncMeetBounds());
+
+openMeetBtn.addEventListener("click", async () => {
   try {
-    await invoke("open_meet_window", { url: meetUrlInput.value.trim() });
-    meetStatusHint.textContent = "Meet window opened. Sign in once if prompted, then use Start Service.";
+    await loadEmbeddedMeet();
   } catch (err) {
     meetStatusHint.textContent = String(err);
   }
@@ -265,9 +361,8 @@ meetCamBtn.addEventListener("click", async () => {
 });
 
 startServiceBtn.addEventListener("click", async () => {
-  await saveMeetUrl();
   try {
-    await invoke("open_meet_window", { url: meetUrlInput.value.trim() });
+    await loadEmbeddedMeet();
     await startMicRecording();
     setTimeout(() => {
       invoke("meet_control", { action: "start" }).catch(() => {});
@@ -1221,9 +1316,13 @@ openSettingsBtn.addEventListener("click", async () => {
   const cfg = await invoke("get_config");
   applyConfigToUI(cfg);
   settingsModal.classList.remove("hidden");
+  syncMeetBounds();
 });
 
-closeSettingsBtn.addEventListener("click", () => settingsModal.classList.add("hidden"));
+closeSettingsBtn.addEventListener("click", () => {
+  settingsModal.classList.add("hidden");
+  syncMeetBounds();
+});
 
 saveSettingsBtn.addEventListener("click", async () => {
   const existing = await invoke("get_config");
@@ -1234,6 +1333,7 @@ saveSettingsBtn.addEventListener("click", async () => {
   await invoke("save_config", { cfg: updated });
   applyConfigToUI(updated);
   settingsModal.classList.add("hidden");
+  syncMeetBounds();
 });
 
 connectDriveBtn.addEventListener("click", async () => {

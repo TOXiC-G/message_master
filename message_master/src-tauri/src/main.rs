@@ -17,7 +17,9 @@ use gdrive::DriveFolder;
 use recorder::{AudioInputDevice, RecorderState};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, WebviewBuilder, WebviewUrl,
+};
 
 #[derive(Debug, Clone, Serialize)]
 struct ProgressEvent {
@@ -551,7 +553,14 @@ fn editor_export_wav(state: State<'_, EditorState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn open_meet_window(app: AppHandle, url: String) -> Result<(), String> {
+async fn embed_meet(
+    app: AppHandle,
+    url: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
     let trimmed = url.trim();
     if trimmed.is_empty() {
         return Err("Please enter your Google Meet URL first.".into());
@@ -560,26 +569,56 @@ async fn open_meet_window(app: AppHandle, url: String) -> Result<(), String> {
         .parse()
         .map_err(|e| format!("Invalid Google Meet URL: {e}"))?;
 
-    if let Some(win) = app.get_webview_window("meet") {
-        let _ = win.set_focus();
+    if let Some(wv) = app.get_webview("meet-embed") {
+        let _ = wv.set_position(LogicalPosition::new(x, y));
+        let _ = wv.set_size(LogicalSize::new(width.max(100.0), height.max(100.0)));
+        let _ = wv.navigate(parsed);
+        let _ = wv.show();
         return Ok(());
     }
 
-    WebviewWindowBuilder::new(&app, "meet", WebviewUrl::External(parsed))
-        .title("Google Meet — MessageMaster")
-        .inner_size(920.0, 680.0)
-        .resizable(true)
-        .build()
-        .map_err(|e| format!("Failed to open Meet window: {e}"))?;
+    let main_win = app
+        .get_window("main")
+        .ok_or_else(|| "Main window not found.".to_string())?;
+
+    let builder = WebviewBuilder::new("meet-embed", WebviewUrl::External(parsed));
+    main_win
+        .add_child(
+            builder,
+            LogicalPosition::new(x, y),
+            LogicalSize::new(width.max(100.0), height.max(100.0)),
+        )
+        .map_err(|e| format!("Failed to embed Google Meet: {e}"))?;
 
     Ok(())
 }
 
 #[tauri::command]
+fn set_meet_bounds(
+    app: AppHandle,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    visible: bool,
+) -> Result<(), String> {
+    if let Some(wv) = app.get_webview("meet-embed") {
+        if visible && width > 40.0 && height > 40.0 {
+            let _ = wv.set_position(LogicalPosition::new(x, y));
+            let _ = wv.set_size(LogicalSize::new(width, height));
+            let _ = wv.show();
+        } else {
+            let _ = wv.hide();
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn meet_control(app: AppHandle, action: String) -> Result<(), String> {
-    let win = app
-        .get_webview_window("meet")
-        .ok_or_else(|| "Open the Meet window first.".to_string())?;
+    let wv = app
+        .get_webview("meet-embed")
+        .ok_or_else(|| "Load Google Meet in the embedded panel first.".to_string())?;
 
     let js = match action.as_str() {
         "toggle_cam" => {
@@ -640,8 +679,8 @@ fn meet_control(app: AppHandle, action: String) -> Result<(), String> {
         _ => return Err("Unknown Meet control action.".into()),
     };
 
-    win.eval(js)
-        .map_err(|e| format!("Failed to control Meet window: {e}"))
+    wv.eval(js)
+        .map_err(|e| format!("Failed to control Meet view: {e}"))
 }
 
 fn main() {
@@ -692,7 +731,8 @@ fn main() {
             editor_play,
             editor_stop,
             editor_export_wav,
-            open_meet_window,
+            embed_meet,
+            set_meet_bounds,
             meet_control
         ])
         .run(tauri::generate_context!())
