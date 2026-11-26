@@ -7,6 +7,7 @@ mod gdrive;
 mod updater;
 
 use config::AppConfig;
+use chrono::Datelike;
 use gdrive::DriveFolder;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -206,7 +207,7 @@ async fn process_audio(
             .and_then(|s| chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok())
             .unwrap_or_else(|| chrono::Local::now().date_naive());
         let year_str = parsed_date.format("%Y").to_string();
-        let month_str = parsed_date.format("%B").to_string(); // Full English month, e.g. "November"
+        let month_str = format!("{}. {}", parsed_date.month(), parsed_date.format("%B")); // e.g. "11. November"
         base_out_dir.join(year_str).join(month_str)
     } else {
         base_out_dir

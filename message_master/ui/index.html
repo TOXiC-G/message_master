@@ -91,17 +91,25 @@
         </div>
         <span class="path-hint hidden" id="basePathHint"></span>
       </div>
+      <div id="preDriveSlot"></div>
     </section>
 
     <!-- Action Bar -->
     <section class="action-bar">
-      <div class="drive-pill-status">
-        <span class="drive-status-dot" id="driveStatusDot"></span>
-        <span class="toggle-label" id="driveConnLabel">Google Drive not connected</span>
+      <div class="action-left">
+        <div class="drive-pill-status">
+          <span class="drive-status-dot" id="driveStatusDot"></span>
+          <span class="toggle-label" id="driveConnLabel">Google Drive not connected</span>
+        </div>
+        <label class="toggle-row" for="uploadDirectlyToggle">
+          <input type="checkbox" id="uploadDirectlyToggle" />
+          <span class="toggle-switch"></span>
+          <span class="toggle-label">Upload to Drive directly</span>
+        </label>
       </div>
 
       <button class="btn-primary" id="startBtn" disabled>
-        <span>Process &amp; Save</span>
+        <span id="startBtnText">Process &amp; Save</span>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="5" y1="12" x2="19" y2="12"></line>
           <polyline points="12 5 19 12 12 19"></polyline>
@@ -149,26 +157,30 @@
           <span class="share-title" id="shareTitle">Saved to Disk — Choose Drive Folder &amp; Upload</span>
           <span class="drive-warn hidden" id="driveWarn"></span>
         </div>
-        <div class="field" id="driveDestPanel">
-          <div class="label-row">
-            <label id="driveDirTitle">Google Drive Destination</label>
-            <div class="mode-pills" role="group" aria-label="Drive save mode">
-              <button type="button" class="mode-pill active" id="driveModeDirectBtn">Direct</button>
-              <button type="button" class="mode-pill" id="driveModeBaseBtn">Base Folder</button>
+        <div id="postDriveSlot">
+          <div id="driveConfigGroup" class="drive-config-group">
+            <div class="field" id="driveDestPanel">
+              <div class="label-row">
+                <label id="driveDirTitle">Google Drive Destination</label>
+                <div class="mode-pills" role="group" aria-label="Drive save mode">
+                  <button type="button" class="mode-pill active" id="driveModeDirectBtn">Direct</button>
+                  <button type="button" class="mode-pill" id="driveModeBaseBtn">Base Folder</button>
+                </div>
+              </div>
+              <div class="dir-date-row">
+                <div class="dest-picker" style="flex: 1; min-width: 0;">
+                  <span class="dest-name" id="destFolderName">My Drive (Root)</span>
+                  <button class="btn-chip" id="browseDriveBtn" type="button">Choose Folder</button>
+                </div>
+                <input type="date" id="driveDateInput" class="date-input hidden" title="Drive Folder Year/Month date" />
+              </div>
+              <span class="path-hint hidden" id="driveBasePathHint"></span>
+            </div>
+            <div class="field" id="driveNameField">
+              <label for="driveNameInput">Google Drive Upload Name (defaults to same name)</label>
+              <input type="text" id="driveNameInput" placeholder="File name on Google Drive..." />
             </div>
           </div>
-          <div class="dir-date-row">
-            <div class="dest-picker" style="flex: 1; min-width: 0;">
-              <span class="dest-name" id="destFolderName">My Drive (Root)</span>
-              <button class="btn-chip" id="browseDriveBtn" type="button">Choose Folder</button>
-            </div>
-            <input type="date" id="driveDateInput" class="date-input hidden" title="Drive Folder Year/Month date" />
-          </div>
-          <span class="path-hint hidden" id="driveBasePathHint"></span>
-        </div>
-        <div class="field" id="driveNameField">
-          <label for="driveNameInput">Google Drive Upload Name (defaults to same name)</label>
-          <input type="text" id="driveNameInput" placeholder="File name on Google Drive..." />
         </div>
         <textarea class="share-textarea" id="shareMessage" rows="2" readonly></textarea>
         <div class="share-actions">

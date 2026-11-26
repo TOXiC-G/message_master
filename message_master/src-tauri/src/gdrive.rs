@@ -1,4 +1,5 @@
 use crate::config::AppConfig;
+use chrono::Datelike;
 use reqwest::multipart::{Form, Part};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -304,7 +305,7 @@ pub async fn upload_file(
             .and_then(|s| chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok())
             .unwrap_or_else(|| chrono::Local::now().date_naive());
         let year_str = parsed_date.format("%Y").to_string();
-        let month_str = parsed_date.format("%B").to_string();
+        let month_str = format!("{}. {}", parsed_date.month(), parsed_date.format("%B"));
 
         let year_folder = find_or_create_folder(cfg, target_parent.as_deref(), &year_str).await?;
         let month_folder = find_or_create_folder(cfg, Some(&year_folder.id), &month_str).await?;

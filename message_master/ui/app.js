@@ -37,6 +37,11 @@ const driveDirTitle = document.getElementById("driveDirTitle");
 const destFolderName = document.getElementById("destFolderName");
 const browseDriveBtn = document.getElementById("browseDriveBtn");
 const startBtn = document.getElementById("startBtn");
+const startBtnText = document.getElementById("startBtnText");
+const uploadDirectlyToggle = document.getElementById("uploadDirectlyToggle");
+const preDriveSlot = document.getElementById("preDriveSlot");
+const postDriveSlot = document.getElementById("postDriveSlot");
+const driveConfigGroup = document.getElementById("driveConfigGroup");
 const driveStatusDot = document.getElementById("driveStatusDot");
 const driveConnLabel = document.getElementById("driveConnLabel");
 const progressCard = document.getElementById("progressCard");
@@ -98,7 +103,7 @@ function updateSaveModeUI(mode) {
     const [y, m] = saveDateInput.value.split("-").map(Number);
     const dt = new Date(y, m - 1, 1);
     const monthName = dt.toLocaleString("en-US", { month: "long" });
-    basePathHint.textContent = `Saves into: <base>\\${y}\\${monthName}\\`;
+    basePathHint.textContent = `Saves into: <base>\\${y}\\${m}. ${monthName}\\`;
   }
 }
 
@@ -113,7 +118,20 @@ function updateDriveModeUI(mode) {
     const [y, m] = driveDateInput.value.split("-").map(Number);
     const dt = new Date(y, m - 1, 1);
     const monthName = dt.toLocaleString("en-US", { month: "long" });
-    driveBasePathHint.textContent = `Uploads into: <Drive Folder> / ${y} / ${monthName} /`;
+    driveBasePathHint.textContent = `Uploads into: <Drive Folder> / ${y} / ${m}. ${monthName} /`;
+  }
+}
+
+function updateUploadDirectlyUI(direct) {
+  uploadDirectlyToggle.checked = direct;
+  if (direct) {
+    preDriveSlot.appendChild(driveConfigGroup);
+    driveConfigGroup.classList.remove("hidden");
+    startBtnText.textContent = "Process & Upload";
+  } else {
+    postDriveSlot.appendChild(driveConfigGroup);
+    driveConfigGroup.classList.remove("hidden");
+    startBtnText.textContent = "Process & Save";
   }
 }
 
@@ -155,6 +173,7 @@ function applyConfigToUI(cfg) {
   }
   updateSaveModeUI(cfg.save_mode || "direct");
   updateDriveModeUI(cfg.drive_save_mode || "direct");
+  updateUploadDirectlyUI(Boolean(cfg.upload_directly));
 
   const connected = Boolean(cfg.refresh_token);
   driveStatusDot.classList.toggle("connected", connected);
@@ -170,6 +189,7 @@ function readConfigFromUI(existing) {
     local_output_dir: existing.local_output_dir || "",
     save_mode: existing.save_mode || "direct",
     drive_save_mode: existing.drive_save_mode || "direct",
+    upload_directly: existing.upload_directly ?? false,
     oauth_client_id: document.getElementById("cfgClientId").value.trim(),
     oauth_client_secret: document.getElementById("cfgClientSecret").value.trim(),
     refresh_token: existing.refresh_token,
@@ -191,7 +211,9 @@ function setSelectedFile(path) {
   const fileName = path.split(/[\\/]/).pop();
   dropTitle.textContent = fileName;
   dropSub.textContent = path;
-  customNameInput.value = cleanBaseName(fileName);
+  const cleaned = cleanBaseName(fileName);
+  customNameInput.value = cleaned;
+  driveNameInput.value = cleaned;
   startBtn.disabled = false;
   errorBanner.classList.add("hidden");
 }
@@ -272,6 +294,13 @@ driveDateInput.addEventListener("change", async () => {
   updateDriveModeUI(cfg.drive_save_mode || "direct");
 });
 
+uploadDirectlyToggle.addEventListener("change", async () => {
+  const existing = await invoke("get_config");
+  const updated = { ...existing, upload_directly: uploadDirectlyToggle.checked };
+  await invoke("save_config", { cfg: updated });
+  updateUploadDirectlyUI(uploadDirectlyToggle.checked);
+});
+
 // Progress listener
 listen("mastering-progress", (event) => {
   const { step, label } = event.payload;
@@ -333,18 +362,64 @@ startBtn.addEventListener("click", async () => {
 
     lastOutputPath = res.output_path;
     lastDisplayName = res.display_name;
-    driveDestPanel.classList.remove("hidden");
-    driveNameField.classList.remove("hidden");
-    driveNameInput.value = res.display_name;
-    shareTitle.textContent = "Saved to Disk — Choose Drive Folder & Upload";
-    shareMessage.value = res.share_message;
-    currentWhatsappUrl = res.whatsapp_url;
-    driveWarn.classList.add("hidden");
+    if (!driveNameInput.value.trim()) {
+      driveNameInput.value = res.display_name;
+    }
 
-    uploadDriveBtn.classList.remove("hidden");
-    uploadDriveBtn.disabled = false;
-    uploadDriveBtnText.textContent = "Upload to Google Drive";
-    whatsappBtn.classList.add("hidden");
+    if (uploadDirectlyToggle.checked) {
+      progressCard.classList.remove("hidden");
+      resultCard.classList.add("hidden");
+      progressStep.textContent = "Uploading";
+      progressLabel.textContent = "Uploading mastered MP3 to Google Drive...";
+      progressFill.style.width = "100%";
+
+      try {
+        const upRes = await invoke("upload_mastered_file", {
+          filePath: lastOutputPath,
+          displayName: lastDisplayName,
+          driveName: driveNameInput.value.trim() || null,
+          driveMode: cfg.drive_save_mode || "direct",
+          saveDate: driveDateInput.value || null,
+        });
+        progressCard.classList.add("hidden");
+        resultCard.classList.remove("hidden");
+        shareTitle.textContent = "Uploaded to Google Drive — Ready to Share";
+        shareMessage.value = upRes.share_message;
+        currentWhatsappUrl = upRes.whatsapp_url;
+        driveWarn.classList.add("hidden");
+        uploadDriveBtn.classList.add("hidden");
+        whatsappBtn.classList.remove("hidden");
+      } catch (upErr) {
+        progressCard.classList.add("hidden");
+        resultCard.classList.remove("hidden");
+        shareTitle.textContent = "Saved to Disk — Upload Failed";
+        shareMessage.value = res.share_message;
+        currentWhatsappUrl = res.whatsapp_url;
+        driveWarn.textContent = `Upload failed: ${String(upErr)}`;
+        driveWarn.classList.remove("hidden");
+        postDriveSlot.appendChild(driveConfigGroup);
+        driveConfigGroup.classList.remove("hidden");
+        uploadDriveBtn.classList.remove("hidden");
+        uploadDriveBtn.disabled = false;
+        uploadDriveBtnText.textContent = "Retry Upload";
+        whatsappBtn.classList.add("hidden");
+      }
+    } else {
+      postDriveSlot.appendChild(driveConfigGroup);
+      driveConfigGroup.classList.remove("hidden");
+      driveDestPanel.classList.remove("hidden");
+      driveNameField.classList.remove("hidden");
+      driveNameInput.value = res.display_name;
+      shareTitle.textContent = "Saved to Disk — Choose Drive Folder & Upload";
+      shareMessage.value = res.share_message;
+      currentWhatsappUrl = res.whatsapp_url;
+      driveWarn.classList.add("hidden");
+
+      uploadDriveBtn.classList.remove("hidden");
+      uploadDriveBtn.disabled = false;
+      uploadDriveBtnText.textContent = "Upload to Google Drive";
+      whatsappBtn.classList.add("hidden");
+    }
   } catch (err) {
     progressCard.classList.add("hidden");
     errorBanner.textContent = String(err);
@@ -372,8 +447,9 @@ uploadDriveBtn.addEventListener("click", async () => {
     shareTitle.textContent = "Uploaded to Google Drive — Ready to Share";
     shareMessage.value = res.share_message;
     currentWhatsappUrl = res.whatsapp_url;
-    driveDestPanel.classList.add("hidden");
-    driveNameField.classList.add("hidden");
+    if (!uploadDirectlyToggle.checked) {
+      driveConfigGroup.classList.add("hidden");
+    }
     uploadDriveBtn.classList.add("hidden");
     whatsappBtn.classList.remove("hidden");
   } catch (err) {

@@ -240,6 +240,18 @@ body {
   gap: 12px;
 }
 
+.action-left {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.drive-config-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .drive-pill-status {
   display: inline-flex;
   align-items: center;
