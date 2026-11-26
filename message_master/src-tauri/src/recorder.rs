@@ -16,6 +16,7 @@ pub struct AudioInputDevice {
 #[derive(Debug, Clone, Serialize)]
 struct LevelEvent {
     rms_db: f32,
+    peak: f32,
     elapsed_s: f64,
     paused: bool,
     monitoring: bool,
@@ -124,7 +125,7 @@ pub fn start_monitor(
     let gain_c = state.gain_bits.clone();
 
     let handle = std::thread::spawn(move || -> Result<(), String> {
-        let latest_rms = Arc::new(Mutex::new(-90.0f32));
+        let latest_rms = Arc::new(Mutex::new((-90.0f32, 0.0f32)));
         let rms_c = latest_rms.clone();
         let err_fn = |err| eprintln!("Monitor stream error: {err}");
 
@@ -164,11 +165,17 @@ pub fn start_monitor(
 
         while !stop_c.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(65));
-            let rms_db = *latest_rms.lock().unwrap_or_else(|e| e.into_inner());
+            let (rms_db, peak) = {
+                let mut g = latest_rms.lock().unwrap_or_else(|e| e.into_inner());
+                let vals = *g;
+                g.1 = 0.0;
+                vals
+            };
             let _ = app.emit(
                 "rec-level",
                 LevelEvent {
                     rms_db,
+                    peak,
                     elapsed_s: 0.0,
                     paused: false,
                     monitoring: true,
@@ -257,7 +264,7 @@ pub fn start_recording(
         let fw_c = frames_written.clone();
         let w_c = writer.clone();
         let p_c = paused_c.clone();
-        let latest_rms = Arc::new(Mutex::new(-90.0f32));
+        let latest_rms = Arc::new(Mutex::new((-90.0f32, 0.0f32)));
         let rms_c = latest_rms.clone();
 
         let err_fn = |err| eprintln!("Recording stream error: {err}");
@@ -296,12 +303,18 @@ pub fn start_recording(
 
         while !stop_c.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(65));
-            let rms_db = *latest_rms.lock().unwrap_or_else(|e| e.into_inner());
+            let (rms_db, peak) = {
+                let mut g = latest_rms.lock().unwrap_or_else(|e| e.into_inner());
+                let vals = *g;
+                g.1 = 0.0;
+                vals
+            };
             let elapsed_s = frames_written.load(Ordering::Relaxed) as f64 / sr as f64;
             let _ = app.emit(
                 "rec-level",
                 LevelEvent {
                     rms_db,
+                    peak,
                     elapsed_s,
                     paused: paused_c.load(Ordering::Relaxed),
                     monitoring: false,
@@ -363,24 +376,32 @@ pub fn stop_recording(state: &RecorderState) -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
-fn measure_rms_f32(data: &[f32], channels: usize, gain: f32, latest_rms: &Mutex<f32>) {
+fn measure_rms_f32(data: &[f32], channels: usize, gain: f32, latest_rms: &Mutex<(f32, f32)>) {
     if data.is_empty() || channels == 0 {
         return;
     }
     let n_frames = data.len() / channels;
     let mut sum_sq = 0.0f32;
+    let mut peak = 0.0f32;
     for f in 0..n_frames {
         let mut mono = 0.0f32;
         for ch in 0..channels {
             mono += data[f * channels + ch];
         }
         mono = (mono / channels as f32) * gain;
+        let abs = mono.abs().min(1.0);
+        if abs > peak {
+            peak = abs;
+        }
         sum_sq += mono * mono;
     }
     let rms = (sum_sq / n_frames.max(1) as f32).sqrt();
     let db = 20.0 * (rms + 1e-6).log10();
     if let Ok(mut r) = latest_rms.lock() {
-        *r = db.max(-90.0);
+        r.0 = db.max(-90.0);
+        if peak > r.1 {
+            r.1 = peak;
+        }
     }
 }
 
@@ -391,13 +412,14 @@ fn handle_input_f32(
     paused: &AtomicBool,
     writer: &Mutex<BufWriter<File>>,
     frames_written: &AtomicU64,
-    latest_rms: &Mutex<f32>,
+    latest_rms: &Mutex<(f32, f32)>,
 ) {
     if data.is_empty() || channels == 0 {
         return;
     }
     let n_frames = data.len() / channels;
     let mut sum_sq = 0.0f32;
+    let mut peak = 0.0f32;
     let mut pcm_bytes = Vec::with_capacity(n_frames * 2);
 
     for f in 0..n_frames {
@@ -406,6 +428,10 @@ fn handle_input_f32(
             mono += data[f * channels + ch];
         }
         mono = (mono / channels as f32) * gain;
+        let abs = mono.abs().min(1.0);
+        if abs > peak {
+            peak = abs;
+        }
         sum_sq += mono * mono;
         let s16 = (mono.clamp(-1.0, 1.0) * 32767.0).round() as i16;
         pcm_bytes.extend_from_slice(&s16.to_le_bytes());
@@ -414,7 +440,10 @@ fn handle_input_f32(
     let rms = (sum_sq / n_frames.max(1) as f32).sqrt();
     let db = 20.0 * (rms + 1e-6).log10();
     if let Ok(mut r) = latest_rms.lock() {
-        *r = db.max(-90.0);
+        r.0 = db.max(-90.0);
+        if peak > r.1 {
+            r.1 = peak;
+        }
     }
 
     if !paused.load(Ordering::Relaxed) {

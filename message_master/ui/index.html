@@ -59,20 +59,29 @@
   </header>
 
   <!-- STAGE 1: RECORD & MEET -->
-  <main class="container hidden" id="stageRecord">
-    <section class="card studio-card">
+  <main class="container container-studio hidden" id="stageRecord">
+    <section class="card studio-card rec-compact-card">
       <div class="rec-header">
-        <div>
-          <h2 class="section-title">Live Mic Recorder</h2>
-          <p class="section-sub">Records uncompressed WAV directly in MessageMaster</p>
+        <div class="rec-title-group">
+          <h2 class="section-title">Live Mic</h2>
+          <span class="monitor-pill" id="recMonitorStatus">Live Monitor</span>
+          <span class="db-readout" id="recDbReadout">-60.0 dB</span>
         </div>
-        <div class="rec-timer" id="recTimer">00:00:00</div>
+        <div class="rec-header-actions">
+          <div class="rec-timer" id="recTimer">00:00:00</div>
+          <button class="btn-danger" id="recStartBtn" type="button" style="flex:0 0 auto; padding: 7px 14px;">
+            <span class="rec-dot"></span>
+            <span id="recStartText">Start Recording</span>
+          </button>
+          <button class="btn-secondary hidden" id="recPauseBtn" type="button" style="flex:0 0 auto; padding: 7px 12px;">Pause</button>
+          <button class="btn-secondary hidden" id="recClearBtn" type="button" style="flex:0 0 auto; padding: 7px 12px;" title="Stop, keep a backup of this take, and reset">Stop &amp; Clear</button>
+          <button class="btn-primary hidden" id="recStopBtn" type="button" style="flex:0 0 auto; padding: 7px 14px;">Stop &amp; Edit &rarr;</button>
+        </div>
       </div>
 
       <div class="rec-input-row">
         <div class="field" style="flex: 1;">
-          <label for="micSelect">Microphone Input</label>
-          <select id="micSelect" class="select-input"></select>
+          <select id="micSelect" class="select-input" aria-label="Microphone Input"></select>
         </div>
         <div class="mic-gain-box">
           <div class="mic-gain-head">
@@ -83,46 +92,25 @@
         </div>
       </div>
 
-      <div class="vu-meta-row">
-        <span class="monitor-pill" id="recMonitorStatus">Live Monitor</span>
-        <span class="db-readout" id="recDbReadout">-60.0 dB</span>
-      </div>
-
       <canvas id="liveWaveCanvas" class="live-wave-canvas" aria-label="Live microphone waveform"></canvas>
-
-      <div class="rec-actions">
-        <button class="btn-danger" id="recStartBtn" type="button">
-          <span class="rec-dot"></span>
-          <span id="recStartText">Start Recording</span>
-        </button>
-        <button class="btn-secondary hidden" id="recPauseBtn" type="button">Pause</button>
-        <button class="btn-secondary hidden" id="recClearBtn" type="button" title="Stop, keep a backup of this take, and reset">Stop &amp; Clear</button>
-        <button class="btn-primary hidden" id="recStopBtn" type="button">Stop &amp; Edit &rarr;</button>
-      </div>
     </section>
 
     <section class="card studio-card meet-studio-card">
       <div class="rec-header">
-        <div>
+        <div class="rec-title-group">
           <h2 class="section-title">Google Meet</h2>
-          <p class="section-sub">Embedded directly inside MessageMaster</p>
+          <span class="path-hint" id="meetStatusHint"></span>
         </div>
-        <button class="btn-secondary" id="openMeetBtn" type="button" style="flex:0 0 auto; padding: 8px 14px;">Load Meet</button>
-      </div>
-
-      <div class="dir-date-row">
-        <input type="text" id="meetUrlInput" class="text-input" placeholder="https://meet.google.com/xxx-xxxx-xxx" style="flex:1;" />
-      </div>
-
-      <div class="meet-controls">
-        <button class="btn-secondary" id="meetCamBtn" type="button">Toggle Camera</button>
-        <button class="btn-primary" id="startServiceBtn" type="button">Start Service (Mic + Meet)</button>
-        <button class="btn-secondary" id="stopServiceBtn" type="button">Stop Service</button>
+        <div class="meet-toolbar">
+          <button class="btn-chip" id="openMeetBtn" type="button">Load Meet</button>
+          <button class="btn-chip" id="meetCamBtn" type="button">Camera</button>
+          <button class="btn-primary" id="startServiceBtn" type="button" style="flex:0 0 auto; padding: 7px 14px;">Start Service (Mic + Meet)</button>
+          <button class="btn-secondary" id="stopServiceBtn" type="button" style="flex:0 0 auto; padding: 7px 12px;">Stop Service</button>
+        </div>
       </div>
       <div id="meetEmbedHost" class="meet-embed-host">
-        <span>Click <strong>Load Meet</strong> above (or set your link in Settings) to display Google Meet here.</span>
+        <span>Set your Google Meet link in <strong>Settings</strong>, then click <strong>Load Meet</strong> to open it here.</span>
       </div>
-      <span class="path-hint" id="meetStatusHint"></span>
     </section>
   </main>
 
@@ -413,19 +401,19 @@
         </div>
 
         <div class="backup-settings-box">
-          <div class="local-dest-head">
+          <div class="label-row">
             <label class="toggle-row compact" for="cfgBackupEnabled" style="margin:0;">
               <input type="checkbox" id="cfgBackupEnabled" checked />
               <span class="toggle-switch"></span>
               <span class="toggle-label">Keep backup of original recording</span>
             </label>
-            <div class="mode-seg" role="group" aria-label="Backup save mode">
-              <button class="mode-btn" id="cfgBackupDirectBtn" type="button">Direct</button>
-              <button class="mode-btn active" id="cfgBackupBaseBtn" type="button">Base Folder</button>
+            <div class="mode-pills" role="group" aria-label="Backup save mode">
+              <button class="mode-pill" id="cfgBackupDirectBtn" type="button">Direct</button>
+              <button class="mode-pill active" id="cfgBackupBaseBtn" type="button">Base Folder</button>
             </div>
           </div>
-          <div class="local-dest-row">
-            <span class="local-dest-path" id="cfgBackupDirDisplay">Documents / MessageMaster / Backups</span>
+          <div class="dest-picker">
+            <span class="dest-name" id="cfgBackupDirDisplay">Documents / MessageMaster / Backups</span>
             <button class="btn-chip" id="cfgBackupChooseBtn" type="button">Choose</button>
           </div>
         </div>

@@ -44,7 +44,7 @@ function switchStage(name) {
   if (typeof syncMeetBounds === "function") {
     requestAnimationFrame(() => syncMeetBounds());
   }
-  if (name === "record" && typeof meetLoaded !== "undefined" && !meetLoaded && meetUrlInput && meetUrlInput.value.trim()) {
+  if (name === "record" && typeof meetLoaded !== "undefined" && !meetLoaded && cfgMeetUrl && cfgMeetUrl.value.trim()) {
     requestAnimationFrame(() => loadEmbeddedMeet());
   }
 }
@@ -104,7 +104,6 @@ const recStartText = document.getElementById("recStartText");
 const recPauseBtn = document.getElementById("recPauseBtn");
 const recClearBtn = document.getElementById("recClearBtn");
 const recStopBtn = document.getElementById("recStopBtn");
-const meetUrlInput = document.getElementById("meetUrlInput");
 const openMeetBtn = document.getElementById("openMeetBtn");
 const meetCamBtn = document.getElementById("meetCamBtn");
 const startServiceBtn = document.getElementById("startServiceBtn");
@@ -163,13 +162,44 @@ micGainSlider.addEventListener("change", async () => {
   } catch {}
 });
 
-const LIVE_WAVE_BARS = 140;
-let liveWaveHistory = new Array(LIVE_WAVE_BARS).fill(0.02);
+const LIVE_WAVE_PTS = 240;
+let liveWavePeaks = new Array(LIVE_WAVE_PTS).fill(0.01);
+let liveWaveRms = new Array(LIVE_WAVE_PTS).fill(0.005);
+
+function drawAudacityRuler(ctx, rulerW, h, dpr) {
+  ctx.fillStyle = "#e2e2e8";
+  ctx.fillRect(0, 0, rulerW, h);
+  ctx.strokeStyle = "#8e8e98";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(rulerW, 0);
+  ctx.lineTo(rulerW, h);
+  ctx.stroke();
+
+  const labels = [
+    { txt: "1.0", y: 9 * dpr },
+    { txt: "0.5", y: h * 0.25 },
+    { txt: "0.0", y: h * 0.5 },
+    { txt: "-0.5", y: h * 0.75 },
+    { txt: "-1.0", y: h - 5 * dpr },
+  ];
+  ctx.fillStyle = "#1e293b";
+  ctx.font = `${Math.round(9.5 * dpr)}px "Plus Jakarta Sans", sans-serif`;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (const lb of labels) {
+    ctx.fillText(lb.txt, rulerW - 5 * dpr, lb.y);
+    ctx.beginPath();
+    ctx.moveTo(rulerW - 3 * dpr, lb.y);
+    ctx.lineTo(rulerW, lb.y);
+    ctx.stroke();
+  }
+}
 
 function drawLiveWaveform(paused, recording) {
   if (!liveWaveCanvas || !liveWaveCtx) return;
   const dpr = window.devicePixelRatio || 1;
-  const cssW = liveWaveCanvas.clientWidth || 720;
+  const cssW = liveWaveCanvas.clientWidth || 900;
   const cssH = liveWaveCanvas.clientHeight || 76;
   const w = Math.floor(cssW * dpr);
   const h = Math.floor(cssH * dpr);
@@ -178,36 +208,79 @@ function drawLiveWaveform(paused, recording) {
     liveWaveCanvas.height = h;
   }
   const ctx = liveWaveCtx;
-  ctx.fillStyle = "#09090b";
+  const rulerW = Math.round(36 * dpr);
+  const trackW = Math.max(10, w - rulerW);
+  const mid = h / 2;
+  const ampScale = mid - 4 * dpr;
+
+  // Audacity silver-grey track background
+  ctx.fillStyle = "#c8c8ce";
   ctx.fillRect(0, 0, w, h);
 
-  // Subtle center zero-line
-  ctx.strokeStyle = "rgba(255,255,255,0.08)";
+  // Subtle horizontal reference lines
+  ctx.strokeStyle = "#b2b2ba";
+  ctx.lineWidth = 1;
+  for (const frac of [0.25, 0.75]) {
+    ctx.beginPath();
+    ctx.moveTo(rulerW, h * frac);
+    ctx.lineTo(w, h * frac);
+    ctx.stroke();
+  }
+
+  // Peak outer continuous envelope (Audacity light royal blue)
+  ctx.fillStyle = paused ? "rgba(217, 119, 6, 0.35)" : recording ? "rgba(91, 95, 232, 0.65)" : "rgba(91, 95, 232, 0.55)";
+  ctx.beginPath();
+  for (let i = 0; i < LIVE_WAVE_PTS; i++) {
+    const x = rulerW + (i / (LIVE_WAVE_PTS - 1)) * trackW;
+    const y = mid - (liveWavePeaks[i] || 0.01) * ampScale;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  for (let i = LIVE_WAVE_PTS - 1; i >= 0; i--) {
+    const x = rulerW + (i / (LIVE_WAVE_PTS - 1)) * trackW;
+    const y = mid + (liveWavePeaks[i] || 0.01) * ampScale;
+    ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // RMS inner continuous envelope (Audacity deep royal blue)
+  ctx.fillStyle = paused ? "#d97706" : "#3232c8";
+  ctx.beginPath();
+  for (let i = 0; i < LIVE_WAVE_PTS; i++) {
+    const x = rulerW + (i / (LIVE_WAVE_PTS - 1)) * trackW;
+    const y = mid - (liveWaveRms[i] || 0.005) * ampScale;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  for (let i = LIVE_WAVE_PTS - 1; i >= 0; i--) {
+    const x = rulerW + (i / (LIVE_WAVE_PTS - 1)) * trackW;
+    const y = mid + (liveWaveRms[i] || 0.005) * ampScale;
+    ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // Center 0.0 line
+  ctx.strokeStyle = "#334155";
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(0, h / 2);
-  ctx.lineTo(w, h / 2);
+  ctx.moveTo(rulerW, mid);
+  ctx.lineTo(w, mid);
   ctx.stroke();
 
-  const step = w / LIVE_WAVE_BARS;
-  const barW = Math.max(2 * dpr, step * 0.65);
-  ctx.fillStyle = paused ? "#f59e0b" : recording ? "#ef4444" : "#8b5cf6";
-
-  for (let i = 0; i < LIVE_WAVE_BARS; i++) {
-    const amp = liveWaveHistory[i] || 0.02;
-    const barH = Math.max(3 * dpr, amp * h * 0.88);
-    const x = i * step;
-    const y = (h - barH) / 2;
-    ctx.fillRect(x, y, barW, barH);
-  }
+  drawAudacityRuler(ctx, rulerW, h, dpr);
 }
 
 listen("rec-level", (e) => {
-  const { rms_db, elapsed_s, paused, monitoring } = e.payload;
-  const norm = Math.max(0.02, Math.min(1, (rms_db + 60) / 60));
+  const { rms_db, peak, elapsed_s, paused, monitoring } = e.payload;
+  const rmsLin = Math.max(0.005, Math.min(1, Math.pow(10, rms_db / 20)));
+  const peakLin = Math.max(rmsLin, Math.min(1, typeof peak === "number" ? peak : rmsLin));
   if (!paused) {
-    liveWaveHistory.push(norm);
-    if (liveWaveHistory.length > LIVE_WAVE_BARS) liveWaveHistory.shift();
+    liveWavePeaks.push(peakLin);
+    liveWaveRms.push(rmsLin);
+    if (liveWavePeaks.length > LIVE_WAVE_PTS) liveWavePeaks.shift();
+    if (liveWaveRms.length > LIVE_WAVE_PTS) liveWaveRms.shift();
   }
   drawLiveWaveform(paused, !monitoring && isRecording);
   recDbReadout.textContent = paused ? "Paused" : `${rms_db <= -89 ? "-∞" : rms_db.toFixed(1)} dB`;
@@ -235,7 +308,8 @@ async function startMicRecording() {
 
 function resetRecButtons() {
   isRecording = false;
-  liveWaveHistory.fill(0.02);
+  liveWavePeaks.fill(0.01);
+  liveWaveRms.fill(0.005);
   drawLiveWaveform(false, false);
   recTimer.textContent = "00:00:00";
   recStartBtn.classList.remove("hidden");
@@ -288,44 +362,18 @@ recStopBtn.addEventListener("click", async () => {
   }
 });
 
-async function saveMeetUrl() {
-  const val = meetUrlInput.value.trim();
-  if (cfgMeetUrl) cfgMeetUrl.value = val;
-  const cfg = await invoke("get_config");
-  const next = { ...cfg, meet_url: val };
-  await invoke("save_config", { cfg: next });
-}
-
-meetUrlInput.addEventListener("change", saveMeetUrl);
-
-let meetLoaded = false;
-
-function isAnyModalOpen() {
-  const sOpen = settingsModal && !settingsModal.classList.contains("hidden");
-  const dOpen = driveModal && !driveModal.classList.contains("hidden");
-  return sOpen || dOpen;
-}
-
-function syncMeetBounds() {
-  if (!meetLoaded || !meetEmbedHost) return;
-  const visible = currentStage === "record" && !isAnyModalOpen();
-  const rect = meetEmbedHost.getBoundingClientRect();
-  invoke("set_meet_bounds", {
-    x: rect.left,
-    y: rect.top,
-    width: rect.width,
-    height: rect.height,
-    visible,
-  }).catch(() => {});
-}
-
 async function loadEmbeddedMeet() {
-  const url = meetUrlInput.value.trim();
+  let url = cfgMeetUrl ? cfgMeetUrl.value.trim() : "";
   if (!url) {
-    meetStatusHint.textContent = "Enter a Google Meet link first (or save one in Settings).";
+    try {
+      const cfg = await invoke("get_config");
+      url = (cfg.meet_url || "").trim();
+    } catch {}
+  }
+  if (!url) {
+    meetStatusHint.textContent = "Set your Google Meet link in Settings first.";
     return;
   }
-  await saveMeetUrl();
   const rect = meetEmbedHost.getBoundingClientRect();
   await invoke("embed_meet", {
     url,
@@ -335,7 +383,7 @@ async function loadEmbeddedMeet() {
     height: Math.max(200, rect.height),
   });
   meetLoaded = true;
-  meetStatusHint.textContent = "Google Meet embedded. Sign in once if prompted — your session is saved.";
+  meetStatusHint.textContent = "Meet ready — sign in once if prompted.";
   syncMeetBounds();
 }
 
@@ -410,26 +458,43 @@ let dragAnchorS = 0;
 let editorDisplayName = "";
 
 function drawWaveform() {
-  const w = waveCanvas.width;
-  const h = waveCanvas.height;
-  waveCtx.clearRect(0, 0, w, h);
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = waveCanvas.clientWidth || 760;
+  const cssH = waveCanvas.clientHeight || 170;
+  const w = Math.floor(cssW * dpr);
+  const h = Math.floor(cssH * dpr);
+  if (waveCanvas.width !== w || waveCanvas.height !== h) {
+    waveCanvas.width = w;
+    waveCanvas.height = h;
+  }
+  const rulerW = Math.round(36 * dpr);
+  const trackW = Math.max(10, w - rulerW);
+  const mid = h / 2;
+  const ampScale = mid - 8 * dpr;
 
-  waveCtx.fillStyle = "#fdfaff";
+  waveCtx.fillStyle = "#c8c8ce";
   waveCtx.fillRect(0, 0, w, h);
 
-  // Center axis
-  waveCtx.strokeStyle = "#e9e0fb";
+  waveCtx.strokeStyle = "#b2b2ba";
   waveCtx.lineWidth = 1;
-  waveCtx.beginPath();
-  waveCtx.moveTo(0, h / 2);
-  waveCtx.lineTo(w, h / 2);
-  waveCtx.stroke();
+  for (const frac of [0.25, 0.75]) {
+    waveCtx.beginPath();
+    waveCtx.moveTo(rulerW, h * frac);
+    waveCtx.lineTo(w, h * frac);
+    waveCtx.stroke();
+  }
 
   if (!waveSummary || !waveSummary.peaks.length || waveSummary.duration_s <= 0) {
-    waveCtx.fillStyle = "#64748b";
-    waveCtx.font = "13px Plus Jakarta Sans, sans-serif";
+    waveCtx.strokeStyle = "#334155";
+    waveCtx.beginPath();
+    waveCtx.moveTo(rulerW, mid);
+    waveCtx.lineTo(w, mid);
+    waveCtx.stroke();
+    drawAudacityRuler(waveCtx, rulerW, h, dpr);
+    waveCtx.fillStyle = "#475569";
+    waveCtx.font = `${Math.round(13 * dpr)}px "Plus Jakarta Sans", sans-serif`;
     waveCtx.textAlign = "center";
-    waveCtx.fillText("No audio loaded yet — record in Stage 1 or click Open File", w / 2, h / 2 + 4);
+    waveCtx.fillText("No audio loaded yet — record in Stage 1 or click Open File", rulerW + trackW / 2, mid - 12 * dpr);
     return;
   }
 
@@ -439,32 +504,50 @@ function drawWaveform() {
   const sA = Math.min(selStartS, selEndS);
   const sB = Math.max(selStartS, selEndS);
   if (sB > sA) {
-    const x1 = (sA / dur) * w;
-    const x2 = (sB / dur) * w;
-    waveCtx.fillStyle = "rgba(124, 58, 237, 0.16)";
+    const x1 = rulerW + (sA / dur) * trackW;
+    const x2 = rulerW + (sB / dur) * trackW;
+    waveCtx.fillStyle = "rgba(50, 50, 200, 0.16)";
     waveCtx.fillRect(x1, 0, x2 - x1, h);
   }
 
-  // Waveform bars
+  // Audacity-style continuous filled waveform polygon
   const peaks = waveSummary.peaks;
-  const mid = h / 2;
-  waveCtx.fillStyle = "#7c3aed";
+  waveCtx.fillStyle = "#3232c8";
+  waveCtx.beginPath();
   for (let i = 0; i < peaks.length; i++) {
-    const x = (i / peaks.length) * w;
-    const [mn, mx] = peaks[i];
-    const yTop = mid - mx * (mid - 8);
-    const yBot = mid - mn * (mid - 8);
-    waveCtx.fillRect(x, yTop, Math.max(1, w / peaks.length), Math.max(1, yBot - yTop));
+    const x = rulerW + (i / (peaks.length - 1)) * trackW;
+    const [, mx] = peaks[i];
+    const yTop = mid - mx * ampScale;
+    if (i === 0) waveCtx.moveTo(x, yTop);
+    else waveCtx.lineTo(x, yTop);
   }
+  for (let i = peaks.length - 1; i >= 0; i--) {
+    const x = rulerW + (i / (peaks.length - 1)) * trackW;
+    const [mn] = peaks[i];
+    const yBot = mid - mn * ampScale;
+    waveCtx.lineTo(x, yBot);
+  }
+  waveCtx.closePath();
+  waveCtx.fill();
+
+  // Center 0.0 line
+  waveCtx.strokeStyle = "#334155";
+  waveCtx.lineWidth = 1;
+  waveCtx.beginPath();
+  waveCtx.moveTo(rulerW, mid);
+  waveCtx.lineTo(w, mid);
+  waveCtx.stroke();
 
   // Playhead
-  const px = (playheadS / dur) * w;
+  const px = rulerW + (playheadS / dur) * trackW;
   waveCtx.strokeStyle = "#059669";
-  waveCtx.lineWidth = 2;
+  waveCtx.lineWidth = Math.max(2, 2 * dpr);
   waveCtx.beginPath();
   waveCtx.moveTo(px, 0);
   waveCtx.lineTo(px, h);
   waveCtx.stroke();
+
+  drawAudacityRuler(waveCtx, rulerW, h, dpr);
 
   const selText = sB > sA ? ` | Selection: ${formatTime(sA)} - ${formatTime(sB)}` : "";
   editorTimeInfo.textContent = `Duration: ${formatTime(dur)} | Cursor: ${formatTime(playheadS)}${selText}`;
@@ -473,7 +556,9 @@ function drawWaveform() {
 function xToTime(clientX) {
   if (!waveSummary || waveSummary.duration_s <= 0) return 0;
   const rect = waveCanvas.getBoundingClientRect();
-  const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  const rulerW = 36;
+  const trackW = Math.max(1, rect.width - rulerW);
+  const frac = Math.max(0, Math.min(1, (clientX - rect.left - rulerW) / trackW));
   return frac * waveSummary.duration_s;
 }
 
@@ -848,7 +933,6 @@ function applyConfigToUI(cfg) {
   document.getElementById("cfgMaxMb").value = cfg.max_size_mb ?? 30;
   document.getElementById("cfgLufs").value = cfg.target_lufs ?? -16;
   document.getElementById("cfgPublicLink").checked = cfg.make_public_link ?? true;
-  meetUrlInput.value = cfg.meet_url || "";
   cfgMeetUrl.value = cfg.meet_url || "";
 
   const gainPct = Math.round((cfg.mic_gain ?? 1.0) * 100);
@@ -891,7 +975,6 @@ function applyConfigToUI(cfg) {
 
 function readConfigFromUI(existing) {
   const meetVal = cfgMeetUrl.value.trim();
-  meetUrlInput.value = meetVal;
   return {
     drive_folder_input: document.getElementById("cfgFolder").value.trim(),
     drive_folder_name: existing.drive_folder_name || "",
