@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::fs::File;
 use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
@@ -18,24 +18,33 @@ struct LevelEvent {
     rms_db: f32,
     elapsed_s: f64,
     paused: bool,
+    monitoring: bool,
 }
 
 struct ActiveRec {
     stop_flag: Arc<AtomicBool>,
     paused_flag: Arc<AtomicBool>,
-    output_path: PathBuf,
+    output_path: Option<PathBuf>,
+    is_monitor: bool,
     join_handle: Option<std::thread::JoinHandle<Result<(), String>>>,
 }
 
 pub struct RecorderState {
     active: Mutex<Option<ActiveRec>>,
+    gain_bits: Arc<AtomicU32>,
 }
 
 impl RecorderState {
-    pub fn new() -> Self {
+    pub fn new(initial_gain: f32) -> Self {
         Self {
             active: Mutex::new(None),
+            gain_bits: Arc::new(AtomicU32::new(initial_gain.clamp(0.0, 3.0).to_bits())),
         }
+    }
+
+    pub fn set_gain(&self, gain: f32) {
+        self.gain_bits
+            .store(gain.clamp(0.0, 3.0).to_bits(), Ordering::Relaxed);
     }
 }
 
@@ -60,18 +69,9 @@ pub fn list_input_devices() -> Result<Vec<AudioInputDevice>, String> {
     Ok(list)
 }
 
-pub fn start_recording(
-    state: &RecorderState,
-    app: AppHandle,
-    device_name: Option<String>,
-) -> Result<String, String> {
-    let mut guard = state.active.lock().map_err(|e| e.to_string())?;
-    if guard.is_some() {
-        return Err("Recording is already in progress.".into());
-    }
-
+fn find_input_device(device_name: Option<String>) -> Result<cpal::Device, String> {
     let host = cpal::default_host();
-    let device = if let Some(ref target) = device_name {
+    if let Some(ref target) = device_name {
         let mut found = None;
         if let Ok(devs) = host.input_devices() {
             for d in devs {
@@ -87,8 +87,144 @@ pub fn start_recording(
     } else {
         host.default_input_device()
     }
-    .ok_or_else(|| "No microphone input device found.".to_string())?;
+    .ok_or_else(|| "No microphone input device found.".to_string())
+}
 
+pub fn start_monitor(
+    state: &RecorderState,
+    app: AppHandle,
+    device_name: Option<String>,
+) -> Result<(), String> {
+    let mut guard = state.active.lock().map_err(|e| e.to_string())?;
+    if let Some(ref existing) = *guard {
+        if !existing.is_monitor {
+            // Do not interrupt an active recording
+            return Ok(());
+        }
+    }
+    if let Some(mut old) = guard.take() {
+        old.stop_flag.store(true, Ordering::Relaxed);
+        if let Some(jh) = old.join_handle.take() {
+            let _ = jh.join();
+        }
+    }
+
+    let device = find_input_device(device_name)?;
+    let config = device
+        .default_input_config()
+        .map_err(|e| format!("Failed to get default mic config: {e}"))?;
+
+    let channels = config.channels() as usize;
+    let sample_format = config.sample_format();
+    let stream_cfg: cpal::StreamConfig = config.into();
+
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let paused_flag = Arc::new(AtomicBool::new(false));
+    let stop_c = stop_flag.clone();
+    let gain_c = state.gain_bits.clone();
+
+    let handle = std::thread::spawn(move || -> Result<(), String> {
+        let latest_rms = Arc::new(Mutex::new(-90.0f32));
+        let rms_c = latest_rms.clone();
+        let err_fn = |err| eprintln!("Monitor stream error: {err}");
+
+        let stream = match sample_format {
+            cpal::SampleFormat::F32 => {
+                let g = gain_c.clone();
+                let r = rms_c.clone();
+                device.build_input_stream(
+                    stream_cfg,
+                    move |data: &[f32], _| {
+                        let gain = f32::from_bits(g.load(Ordering::Relaxed));
+                        measure_rms_f32(data, channels, gain, &r);
+                    },
+                    err_fn,
+                    None,
+                )
+            }
+            cpal::SampleFormat::I16 => {
+                let g = gain_c.clone();
+                let r = rms_c.clone();
+                device.build_input_stream(
+                    stream_cfg,
+                    move |data: &[i16], _| {
+                        let gain = f32::from_bits(g.load(Ordering::Relaxed));
+                        let f32_buf: Vec<f32> = data.iter().map(|&s| s as f32 / 32768.0).collect();
+                        measure_rms_f32(&f32_buf, channels, gain, &r);
+                    },
+                    err_fn,
+                    None,
+                )
+            }
+            _ => return Err("Unsupported microphone sample format.".into()),
+        }
+        .map_err(|e| format!("Failed to open mic monitor stream: {e}"))?;
+
+        stream.play().map_err(|e| format!("Failed to start mic monitor: {e}"))?;
+
+        while !stop_c.load(Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_millis(65));
+            let rms_db = *latest_rms.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = app.emit(
+                "rec-level",
+                LevelEvent {
+                    rms_db,
+                    elapsed_s: 0.0,
+                    paused: false,
+                    monitoring: true,
+                },
+            );
+        }
+        drop(stream);
+        Ok(())
+    });
+
+    *guard = Some(ActiveRec {
+        stop_flag,
+        paused_flag,
+        output_path: None,
+        is_monitor: true,
+        join_handle: Some(handle),
+    });
+
+    Ok(())
+}
+
+pub fn stop_monitor(state: &RecorderState) -> Result<(), String> {
+    let mut guard = state.active.lock().map_err(|e| e.to_string())?;
+    if let Some(ref existing) = *guard {
+        if existing.is_monitor {
+            if let Some(mut old) = guard.take() {
+                old.stop_flag.store(true, Ordering::Relaxed);
+                if let Some(jh) = old.join_handle.take() {
+                    let _ = jh.join();
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn start_recording(
+    state: &RecorderState,
+    app: AppHandle,
+    device_name: Option<String>,
+) -> Result<String, String> {
+    let mut guard = state.active.lock().map_err(|e| e.to_string())?;
+    if let Some(ref existing) = *guard {
+        if !existing.is_monitor {
+            return Err("Recording is already in progress.".into());
+        }
+    }
+    // Stop active monitor if running
+    if let Some(mut mon) = guard.take() {
+        mon.stop_flag.store(true, Ordering::Relaxed);
+        if let Some(jh) = mon.join_handle.take() {
+            let _ = jh.join();
+        }
+    }
+
+    let device = find_input_device(device_name)?;
     let config = device
         .default_input_config()
         .map_err(|e| format!("Failed to get default mic config: {e}"))?;
@@ -106,6 +242,7 @@ pub fn start_recording(
     let paused_flag = Arc::new(AtomicBool::new(false));
     let stop_c = stop_flag.clone();
     let paused_c = paused_flag.clone();
+    let gain_c = state.gain_bits.clone();
 
     let handle = std::thread::spawn(move || -> Result<(), String> {
         let file = File::create(&out_path_clone)
@@ -126,23 +263,31 @@ pub fn start_recording(
         let err_fn = |err| eprintln!("Recording stream error: {err}");
 
         let stream = match sample_format {
-            cpal::SampleFormat::F32 => device.build_input_stream(
-                stream_cfg,
-                move |data: &[f32], _| {
-                    handle_input_f32(data, channels, &p_c, &w_c, &fw_c, &rms_c);
-                },
-                err_fn,
-                None,
-            ),
-            cpal::SampleFormat::I16 => device.build_input_stream(
-                stream_cfg,
-                move |data: &[i16], _| {
-                    let f32_buf: Vec<f32> = data.iter().map(|&s| s as f32 / 32768.0).collect();
-                    handle_input_f32(&f32_buf, channels, &p_c, &w_c, &fw_c, &rms_c);
-                },
-                err_fn,
-                None,
-            ),
+            cpal::SampleFormat::F32 => {
+                let g = gain_c.clone();
+                device.build_input_stream(
+                    stream_cfg,
+                    move |data: &[f32], _| {
+                        let gain = f32::from_bits(g.load(Ordering::Relaxed));
+                        handle_input_f32(data, channels, gain, &p_c, &w_c, &fw_c, &rms_c);
+                    },
+                    err_fn,
+                    None,
+                )
+            }
+            cpal::SampleFormat::I16 => {
+                let g = gain_c.clone();
+                device.build_input_stream(
+                    stream_cfg,
+                    move |data: &[i16], _| {
+                        let gain = f32::from_bits(g.load(Ordering::Relaxed));
+                        let f32_buf: Vec<f32> = data.iter().map(|&s| s as f32 / 32768.0).collect();
+                        handle_input_f32(&f32_buf, channels, gain, &p_c, &w_c, &fw_c, &rms_c);
+                    },
+                    err_fn,
+                    None,
+                )
+            }
             _ => return Err("Unsupported microphone sample format.".into()),
         }
         .map_err(|e| format!("Failed to open microphone stream: {e}"))?;
@@ -159,6 +304,7 @@ pub fn start_recording(
                     rms_db,
                     elapsed_s,
                     paused: paused_c.load(Ordering::Relaxed),
+                    monitoring: false,
                 },
             );
         }
@@ -180,7 +326,8 @@ pub fn start_recording(
     *guard = Some(ActiveRec {
         stop_flag,
         paused_flag,
-        output_path: out_path.clone(),
+        output_path: Some(out_path.clone()),
+        is_monitor: false,
         join_handle: Some(handle),
     });
 
@@ -189,7 +336,10 @@ pub fn start_recording(
 
 pub fn toggle_pause(state: &RecorderState) -> Result<bool, String> {
     let guard = state.active.lock().map_err(|e| e.to_string())?;
-    let rec = guard.as_ref().ok_or("No active recording.")?;
+    let rec = guard
+        .as_ref()
+        .filter(|r| !r.is_monitor)
+        .ok_or("No active recording.")?;
     let prev = rec.paused_flag.load(Ordering::Relaxed);
     let next = !prev;
     rec.paused_flag.store(next, Ordering::Relaxed);
@@ -198,17 +348,46 @@ pub fn toggle_pause(state: &RecorderState) -> Result<bool, String> {
 
 pub fn stop_recording(state: &RecorderState) -> Result<String, String> {
     let mut guard = state.active.lock().map_err(|e| e.to_string())?;
+    let is_rec = guard.as_ref().map(|r| !r.is_monitor).unwrap_or(false);
+    if !is_rec {
+        return Err("No active recording.".into());
+    }
     let mut rec = guard.take().ok_or("No active recording.")?;
     rec.stop_flag.store(true, Ordering::Relaxed);
     if let Some(jh) = rec.join_handle.take() {
         jh.join().map_err(|_| "Recorder thread panicked".to_string())??;
     }
-    Ok(rec.output_path.to_string_lossy().to_string())
+    let path = rec
+        .output_path
+        .ok_or_else(|| "Missing recording output path".to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn measure_rms_f32(data: &[f32], channels: usize, gain: f32, latest_rms: &Mutex<f32>) {
+    if data.is_empty() || channels == 0 {
+        return;
+    }
+    let n_frames = data.len() / channels;
+    let mut sum_sq = 0.0f32;
+    for f in 0..n_frames {
+        let mut mono = 0.0f32;
+        for ch in 0..channels {
+            mono += data[f * channels + ch];
+        }
+        mono = (mono / channels as f32) * gain;
+        sum_sq += mono * mono;
+    }
+    let rms = (sum_sq / n_frames.max(1) as f32).sqrt();
+    let db = 20.0 * (rms + 1e-6).log10();
+    if let Ok(mut r) = latest_rms.lock() {
+        *r = db.max(-90.0);
+    }
 }
 
 fn handle_input_f32(
     data: &[f32],
     channels: usize,
+    gain: f32,
     paused: &AtomicBool,
     writer: &Mutex<BufWriter<File>>,
     frames_written: &AtomicU64,
@@ -226,7 +405,7 @@ fn handle_input_f32(
         for ch in 0..channels {
             mono += data[f * channels + ch];
         }
-        mono /= channels as f32;
+        mono = (mono / channels as f32) * gain;
         sum_sq += mono * mono;
         let s16 = (mono.clamp(-1.0, 1.0) * 32767.0).round() as i16;
         pcm_bytes.extend_from_slice(&s16.to_le_bytes());

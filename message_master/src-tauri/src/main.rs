@@ -151,6 +151,61 @@ async fn delete_drive_folder(folder_id: String) -> Result<(), String> {
     gdrive::delete_folder(&cfg, &folder_id).await
 }
 
+fn resolve_target_dir(base_dir: &Path, mode: &str, save_date: Option<&str>) -> PathBuf {
+    if mode.eq_ignore_ascii_case("base") {
+        let parsed_date = save_date
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok())
+            .unwrap_or_else(|| chrono::Local::now().date_naive());
+        let year_str = parsed_date.format("%Y").to_string();
+        let month_str = format!("{}. {}", parsed_date.month(), parsed_date.format("%B"));
+        base_dir.join(year_str).join(month_str)
+    } else {
+        base_dir.to_path_buf()
+    }
+}
+
+fn default_backup_root() -> PathBuf {
+    dirs::document_dir()
+        .or_else(dirs::data_local_dir)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("MessageMaster")
+        .join("Backups")
+}
+
+fn save_original_backup(
+    src_path: &Path,
+    safe_base_name: &str,
+    cfg: &AppConfig,
+    save_date: Option<&str>,
+) -> Result<PathBuf, String> {
+    if !src_path.exists() {
+        return Err("Original source file no longer exists for backup.".into());
+    }
+    let root = if cfg.backup_dir.trim().is_empty() {
+        default_backup_root()
+    } else {
+        PathBuf::from(cfg.backup_dir.trim())
+    };
+    let target_dir = resolve_target_dir(&root, &cfg.backup_save_mode, save_date);
+    if !target_dir.exists() {
+        std::fs::create_dir_all(&target_dir)
+            .map_err(|e| format!("Failed to create backup folder: {e}"))?;
+    }
+    let ext = src_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("wav");
+    let mut dest = target_dir.join(format!("{safe_base_name} (Original).{ext}"));
+    if dest.exists() {
+        let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        dest = target_dir.join(format!("{safe_base_name} (Original)_{ts}.{ext}"));
+    }
+    std::fs::copy(src_path, &dest)
+        .map_err(|e| format!("Failed to copy original recording backup: {e}"))?;
+    Ok(dest)
+}
+
 #[tauri::command]
 async fn process_audio(
     app: AppHandle,
@@ -159,6 +214,7 @@ async fn process_audio(
     output_dir: Option<String>,
     save_mode: Option<String>,
     save_date: Option<String>,
+    original_backup_source: Option<String>,
 ) -> Result<ProcessResult, String> {
     let in_path = PathBuf::from(&input_path);
     if !in_path.exists() {
@@ -207,17 +263,7 @@ async fn process_audio(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| cfg.save_mode.to_lowercase());
 
-    let out_dir = if mode == "base" {
-        let parsed_date = save_date
-            .as_deref()
-            .and_then(|s| chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok())
-            .unwrap_or_else(|| chrono::Local::now().date_naive());
-        let year_str = parsed_date.format("%Y").to_string();
-        let month_str = format!("{}. {}", parsed_date.month(), parsed_date.format("%B")); // e.g. "11. November"
-        base_out_dir.join(year_str).join(month_str)
-    } else {
-        base_out_dir
-    };
+    let out_dir = resolve_target_dir(&base_out_dir, &mode, save_date.as_deref());
 
     if !out_dir.exists() {
         std::fs::create_dir_all(&out_dir)
@@ -289,6 +335,17 @@ async fn process_audio(
     })
     .await
     .map_err(|e| format!("Processing thread error: {e}"))??;
+
+    if cfg.backup_enabled {
+        let backup_src = original_backup_source
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .filter(|p| p.exists())
+            .unwrap_or_else(|| in_path.clone());
+        let _ = save_original_backup(&backup_src, &safe_filename, &cfg, save_date.as_deref());
+    }
 
     let share_message = format!("{display_name}\n{}", stats.output_path);
     let whatsapp_url = format!(
@@ -382,6 +439,26 @@ fn list_audio_inputs() -> Result<Vec<AudioInputDevice>, String> {
 }
 
 #[tauri::command]
+fn rec_monitor_start(
+    app: AppHandle,
+    state: State<'_, RecorderState>,
+    device_name: Option<String>,
+) -> Result<(), String> {
+    recorder::start_monitor(&state, app, device_name)
+}
+
+#[tauri::command]
+fn rec_monitor_stop(state: State<'_, RecorderState>) -> Result<(), String> {
+    recorder::stop_monitor(&state)
+}
+
+#[tauri::command]
+fn rec_set_gain(state: State<'_, RecorderState>, gain: f32) -> Result<(), String> {
+    state.set_gain(gain);
+    Ok(())
+}
+
+#[tauri::command]
 fn rec_start(
     app: AppHandle,
     state: State<'_, RecorderState>,
@@ -398,6 +475,25 @@ fn rec_pause_toggle(state: State<'_, RecorderState>) -> Result<bool, String> {
 #[tauri::command]
 fn rec_stop(state: State<'_, RecorderState>) -> Result<String, String> {
     recorder::stop_recording(&state)
+}
+
+#[tauri::command]
+fn rec_clear_and_backup(
+    state: State<'_, RecorderState>,
+    save_date: Option<String>,
+) -> Result<String, String> {
+    let temp_wav = recorder::stop_recording(&state)?;
+    let cfg = AppConfig::load();
+    let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let backup_name = format!("Cleared_Take_{ts}");
+    let backed_up = save_original_backup(
+        Path::new(&temp_wav),
+        &backup_name,
+        &cfg,
+        save_date.as_deref(),
+    )?;
+    let _ = std::fs::remove_file(&temp_wav);
+    Ok(backed_up.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -549,8 +645,9 @@ fn meet_control(app: AppHandle, action: String) -> Result<(), String> {
 }
 
 fn main() {
+    let initial_gain = AppConfig::load().mic_gain;
     tauri::Builder::default()
-        .manage(RecorderState::new())
+        .manage(RecorderState::new(initial_gain))
         .manage(EditorState::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
@@ -579,9 +676,13 @@ fn main() {
             get_catalog,
             save_catalog_entry,
             list_audio_inputs,
+            rec_monitor_start,
+            rec_monitor_stop,
+            rec_set_gain,
             rec_start,
             rec_pause_toggle,
             rec_stop,
+            rec_clear_and_backup,
             editor_load,
             editor_cut,
             editor_copy,

@@ -23,7 +23,10 @@ const stages = {
   master: document.getElementById("stageMaster"),
 };
 
+let currentStage = "master";
+
 function switchStage(name) {
+  currentStage = name;
   stageTabs.forEach((btn) => {
     const active = btn.dataset.stage === name;
     btn.classList.toggle("active", active);
@@ -33,6 +36,11 @@ function switchStage(name) {
     el.classList.toggle("hidden", k !== name);
   });
   if (name === "edit") drawWaveform();
+  if (name === "record" && !isRecording) {
+    startLiveMonitor();
+  } else if (name !== "record" && !isRecording) {
+    invoke("rec_monitor_stop").catch(() => {});
+  }
 }
 
 stageTabs.forEach((btn) => {
@@ -77,11 +85,16 @@ function cleanBaseName(fileName) {
 
 // --- Stage 1: Recorder & Embedded Meet ---
 const micSelect = document.getElementById("micSelect");
+const micGainSlider = document.getElementById("micGainSlider");
+const micGainLabel = document.getElementById("micGainLabel");
+const recMonitorStatus = document.getElementById("recMonitorStatus");
+const recDbReadout = document.getElementById("recDbReadout");
 const vuFill = document.getElementById("vuFill");
 const recTimer = document.getElementById("recTimer");
 const recStartBtn = document.getElementById("recStartBtn");
 const recStartText = document.getElementById("recStartText");
 const recPauseBtn = document.getElementById("recPauseBtn");
+const recClearBtn = document.getElementById("recClearBtn");
 const recStopBtn = document.getElementById("recStopBtn");
 const meetUrlInput = document.getElementById("meetUrlInput");
 const openMeetBtn = document.getElementById("openMeetBtn");
@@ -90,6 +103,18 @@ const startServiceBtn = document.getElementById("startServiceBtn");
 const stopServiceBtn = document.getElementById("stopServiceBtn");
 const meetStatusHint = document.getElementById("meetStatusHint");
 let isRecording = false;
+let originalRecordedWavPath = null;
+
+async function startLiveMonitor() {
+  if (isRecording) return;
+  try {
+    await invoke("rec_monitor_start", { deviceName: micSelect.value || null });
+    recMonitorStatus.textContent = "Live Monitor";
+    recMonitorStatus.classList.remove("recording", "paused");
+  } catch (e) {
+    console.warn("Mic monitor unavailable:", e);
+  }
+}
 
 async function loadMics() {
   try {
@@ -102,16 +127,48 @@ async function loadMics() {
       if (d.is_default) opt.selected = true;
       micSelect.appendChild(opt);
     }
+    if (currentStage === "record" && !isRecording) {
+      await startLiveMonitor();
+    }
   } catch (e) {
     console.error("Failed to list mics:", e);
   }
 }
 
+micSelect.addEventListener("change", () => {
+  if (currentStage === "record" && !isRecording) {
+    startLiveMonitor();
+  }
+});
+
+micGainSlider.addEventListener("input", () => {
+  const pct = parseInt(micGainSlider.value, 10) || 100;
+  micGainLabel.textContent = `${pct}%`;
+  invoke("rec_set_gain", { gain: pct / 100 }).catch(() => {});
+});
+
+micGainSlider.addEventListener("change", async () => {
+  const pct = parseInt(micGainSlider.value, 10) || 100;
+  try {
+    const cfg = await invoke("get_config");
+    await invoke("save_config", { cfg: { ...cfg, mic_gain: pct / 100 } });
+  } catch {}
+});
+
 listen("rec-level", (e) => {
-  const { rms_db, elapsed_s, paused } = e.payload;
+  const { rms_db, elapsed_s, paused, monitoring } = e.payload;
   const pct = Math.max(0, Math.min(100, ((rms_db + 60) / 60) * 100));
   vuFill.style.width = paused ? "0%" : `${pct}%`;
-  recTimer.textContent = formatTimerHMS(elapsed_s);
+  recDbReadout.textContent = paused ? "Paused" : `${rms_db <= -89 ? "-∞" : rms_db.toFixed(1)} dB`;
+  if (!monitoring) {
+    recTimer.textContent = formatTimerHMS(elapsed_s);
+    recMonitorStatus.textContent = paused ? "Paused" : "Recording";
+    recMonitorStatus.classList.toggle("recording", !paused);
+    recMonitorStatus.classList.toggle("paused", paused);
+  } else if (!isRecording) {
+    recMonitorStatus.textContent = "Live Monitor";
+    recMonitorStatus.classList.remove("recording", "paused");
+  }
 });
 
 async function startMicRecording() {
@@ -120,18 +177,26 @@ async function startMicRecording() {
   isRecording = true;
   recStartBtn.classList.add("hidden");
   recPauseBtn.classList.remove("hidden");
+  recClearBtn.classList.remove("hidden");
   recStopBtn.classList.remove("hidden");
   recPauseBtn.textContent = "Pause";
+}
+
+function resetRecButtons() {
+  isRecording = false;
+  vuFill.style.width = "0%";
+  recTimer.textContent = "00:00:00";
+  recStartBtn.classList.remove("hidden");
+  recPauseBtn.classList.add("hidden");
+  recClearBtn.classList.add("hidden");
+  recStopBtn.classList.add("hidden");
 }
 
 async function stopMicAndEdit() {
   if (!isRecording) return;
   const wavPath = await invoke("rec_stop");
-  isRecording = false;
-  vuFill.style.width = "0%";
-  recStartBtn.classList.remove("hidden");
-  recPauseBtn.classList.add("hidden");
-  recStopBtn.classList.add("hidden");
+  originalRecordedWavPath = wavPath;
+  resetRecButtons();
   await openFileInEditor(wavPath, `Recording_${getTodayLocalISO()}`);
   switchStage("edit");
 }
@@ -149,6 +214,20 @@ recPauseBtn.addEventListener("click", async () => {
   recPauseBtn.textContent = paused ? "Resume" : "Pause";
 });
 
+recClearBtn.addEventListener("click", async () => {
+  if (!isRecording) return;
+  try {
+    const backupPath = await invoke("rec_clear_and_backup", {
+      saveDate: saveDateInput.value || null,
+    });
+    resetRecButtons();
+    meetStatusHint.textContent = `Recording cleared. Old take backed up to: ${backupPath}`;
+    await startLiveMonitor();
+  } catch (err) {
+    meetStatusHint.textContent = String(err);
+  }
+});
+
 recStopBtn.addEventListener("click", async () => {
   try {
     await stopMicAndEdit();
@@ -158,8 +237,10 @@ recStopBtn.addEventListener("click", async () => {
 });
 
 async function saveMeetUrl() {
+  const val = meetUrlInput.value.trim();
+  if (cfgMeetUrl) cfgMeetUrl.value = val;
   const cfg = await invoke("get_config");
-  const next = { ...cfg, meet_url: meetUrlInput.value.trim() };
+  const next = { ...cfg, meet_url: val };
   await invoke("save_config", { cfg: next });
 }
 
@@ -638,6 +719,33 @@ function updateUploadDirectlyUI(direct) {
   }
 }
 
+const cfgMeetUrl = document.getElementById("cfgMeetUrl");
+const cfgBackupEnabled = document.getElementById("cfgBackupEnabled");
+const cfgBackupDirectBtn = document.getElementById("cfgBackupDirectBtn");
+const cfgBackupBaseBtn = document.getElementById("cfgBackupBaseBtn");
+const cfgBackupDirDisplay = document.getElementById("cfgBackupDirDisplay");
+const cfgBackupChooseBtn = document.getElementById("cfgBackupChooseBtn");
+let pendingBackupDir = "";
+let pendingBackupMode = "base";
+
+function updateBackupModeUI(mode) {
+  pendingBackupMode = mode === "direct" ? "direct" : "base";
+  cfgBackupDirectBtn.classList.toggle("active", pendingBackupMode === "direct");
+  cfgBackupBaseBtn.classList.toggle("active", pendingBackupMode === "base");
+}
+
+cfgBackupDirectBtn.addEventListener("click", () => updateBackupModeUI("direct"));
+cfgBackupBaseBtn.addEventListener("click", () => updateBackupModeUI("base"));
+
+cfgBackupChooseBtn.addEventListener("click", async () => {
+  const dir = await openDialog({ directory: true, multiple: false });
+  if (dir) {
+    pendingBackupDir = dir;
+    cfgBackupDirDisplay.textContent = dir.split(/[\\/]/).pop() || dir;
+    cfgBackupDirDisplay.title = dir;
+  }
+});
+
 function applyConfigToUI(cfg) {
   document.getElementById("cfgFolder").value = cfg.drive_folder_input || "";
   document.getElementById("cfgClientId").value = cfg.oauth_client_id || "";
@@ -646,6 +754,22 @@ function applyConfigToUI(cfg) {
   document.getElementById("cfgLufs").value = cfg.target_lufs ?? -16;
   document.getElementById("cfgPublicLink").checked = cfg.make_public_link ?? true;
   meetUrlInput.value = cfg.meet_url || "";
+  cfgMeetUrl.value = cfg.meet_url || "";
+
+  const gainPct = Math.round((cfg.mic_gain ?? 1.0) * 100);
+  micGainSlider.value = String(gainPct);
+  micGainLabel.textContent = `${gainPct}%`;
+
+  cfgBackupEnabled.checked = cfg.backup_enabled ?? true;
+  pendingBackupDir = cfg.backup_dir || "";
+  if (pendingBackupDir) {
+    cfgBackupDirDisplay.textContent = pendingBackupDir.split(/[\\/]/).pop() || pendingBackupDir;
+    cfgBackupDirDisplay.title = pendingBackupDir;
+  } else {
+    cfgBackupDirDisplay.textContent = "Documents / MessageMaster / Backups";
+    cfgBackupDirDisplay.title = "";
+  }
+  updateBackupModeUI(cfg.backup_save_mode || "base");
 
   if (cfg.drive_folder_name) destFolderName.textContent = cfg.drive_folder_name;
   else if (cfg.drive_folder_input) destFolderName.textContent = cfg.drive_folder_input;
@@ -671,6 +795,8 @@ function applyConfigToUI(cfg) {
 }
 
 function readConfigFromUI(existing) {
+  const meetVal = cfgMeetUrl.value.trim();
+  meetUrlInput.value = meetVal;
   return {
     drive_folder_input: document.getElementById("cfgFolder").value.trim(),
     drive_folder_name: existing.drive_folder_name || "",
@@ -678,7 +804,11 @@ function readConfigFromUI(existing) {
     save_mode: existing.save_mode || "direct",
     drive_save_mode: existing.drive_save_mode || "direct",
     upload_directly: existing.upload_directly ?? false,
-    meet_url: meetUrlInput.value.trim(),
+    meet_url: meetVal,
+    mic_gain: (parseInt(micGainSlider.value, 10) || 100) / 100,
+    backup_enabled: cfgBackupEnabled.checked,
+    backup_dir: pendingBackupDir,
+    backup_save_mode: pendingBackupMode,
     oauth_client_id: document.getElementById("cfgClientId").value.trim(),
     oauth_client_secret: document.getElementById("cfgClientSecret").value.trim(),
     refresh_token: existing.refresh_token,
@@ -838,6 +968,7 @@ startBtn.addEventListener("click", async () => {
       outputDir: cfg.local_output_dir || null,
       saveMode: cfg.save_mode || "direct",
       saveDate: saveDateInput.value || null,
+      originalBackupSource: originalRecordedWavPath || null,
     });
 
     progressCard.classList.add("hidden");

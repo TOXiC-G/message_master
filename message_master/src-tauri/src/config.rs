@@ -17,6 +17,14 @@ pub struct AppConfig {
     pub upload_directly: bool,
     #[serde(default)]
     pub meet_url: String,
+    #[serde(default = "default_mic_gain")]
+    pub mic_gain: f32,
+    #[serde(default = "default_true")]
+    pub backup_enabled: bool,
+    #[serde(default)]
+    pub backup_dir: String,
+    #[serde(default = "default_base_mode")]
+    pub backup_save_mode: String,
     pub oauth_client_id: String,
     pub oauth_client_secret: String,
     pub refresh_token: Option<String>,
@@ -29,6 +37,18 @@ fn default_save_mode() -> String {
     "direct".to_string()
 }
 
+fn default_base_mode() -> String {
+    "base".to_string()
+}
+
+fn default_mic_gain() -> f32 {
+    1.0
+}
+
+fn default_true() -> bool {
+    true
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -39,6 +59,10 @@ impl Default for AppConfig {
             drive_save_mode: default_save_mode(),
             upload_directly: false,
             meet_url: String::new(),
+            mic_gain: default_mic_gain(),
+            backup_enabled: true,
+            backup_dir: String::new(),
+            backup_save_mode: default_base_mode(),
             oauth_client_id: String::new(),
             oauth_client_secret: String::new(),
             refresh_token: None,
