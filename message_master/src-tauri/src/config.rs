@@ -15,6 +15,8 @@ pub struct AppConfig {
     pub drive_save_mode: String,
     #[serde(default)]
     pub upload_directly: bool,
+    #[serde(default)]
+    pub meet_url: String,
     pub oauth_client_id: String,
     pub oauth_client_secret: String,
     pub refresh_token: Option<String>,
@@ -36,6 +38,7 @@ impl Default for AppConfig {
             save_mode: default_save_mode(),
             drive_save_mode: default_save_mode(),
             upload_directly: false,
+            meet_url: String::new(),
             oauth_client_id: String::new(),
             oauth_client_secret: String::new(),
             refresh_token: None,

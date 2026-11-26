@@ -23,12 +23,19 @@
         </svg>
       </div>
       <span class="app-name">MessageMaster</span>
-      <span class="version-pill" id="appVersion">v1.0.0</span>
-      <button class="update-pill hidden" id="updateBadge" title="Click to view update">
+      <span class="version-pill" id="appVersion">v1.1.0</span>
+      <button class="update-pill hidden" id="updateBadge" title="Click to install update">
         <span class="update-dot"></span>
         <span id="updateText">Update available</span>
       </button>
     </div>
+
+    <!-- Clean 3-Stage Mode Switcher -->
+    <nav class="stage-tabs" role="tablist" aria-label="Workflow stages">
+      <button class="stage-tab" data-stage="record" role="tab" aria-selected="false">1. Record</button>
+      <button class="stage-tab" data-stage="edit" role="tab" aria-selected="false">2. Trim &amp; Edit</button>
+      <button class="stage-tab active" data-stage="master" role="tab" aria-selected="true">3. Master &amp; Share</button>
+    </nav>
 
     <div class="titlebar-right">
       <button class="icon-btn" id="openSettingsBtn" title="Settings" aria-label="Settings">
@@ -51,12 +58,92 @@
     </div>
   </header>
 
-  <!-- Main Workspace -->
-  <main class="container">
+  <!-- STAGE 1: RECORD & MEET -->
+  <main class="container hidden" id="stageRecord">
+    <section class="card studio-card">
+      <div class="rec-header">
+        <div>
+          <h2 class="section-title">Live Mic Recorder</h2>
+          <p class="section-sub">Records uncompressed WAV directly in MessageMaster</p>
+        </div>
+        <div class="rec-timer" id="recTimer">00:00:00</div>
+      </div>
+
+      <div class="field">
+        <label for="micSelect">Microphone Input</label>
+        <select id="micSelect" class="select-input"></select>
+      </div>
+
+      <div class="vu-wrap" aria-label="Input level meter">
+        <div class="vu-fill" id="vuFill" style="width: 0%"></div>
+      </div>
+
+      <div class="rec-actions">
+        <button class="btn-danger" id="recStartBtn" type="button">
+          <span class="rec-dot"></span>
+          <span id="recStartText">Start Recording</span>
+        </button>
+        <button class="btn-secondary hidden" id="recPauseBtn" type="button">Pause</button>
+        <button class="btn-primary hidden" id="recStopBtn" type="button">Stop &amp; Edit &rarr;</button>
+      </div>
+    </section>
+
+    <section class="card studio-card">
+      <div class="rec-header">
+        <div>
+          <h2 class="section-title">Embedded Google Meet</h2>
+          <p class="section-sub">Opens inside MessageMaster (no external Chrome needed)</p>
+        </div>
+        <button class="btn-secondary" id="openMeetBtn" type="button" style="flex:0 0 auto; padding: 8px 14px;">Open Meet Window</button>
+      </div>
+
+      <div class="dir-date-row">
+        <input type="text" id="meetUrlInput" class="text-input" placeholder="https://meet.google.com/xxx-xxxx-xxx" style="flex:1;" />
+      </div>
+
+      <div class="meet-controls">
+        <button class="btn-secondary" id="meetCamBtn" type="button">Toggle Camera</button>
+        <button class="btn-primary" id="startServiceBtn" type="button">Start Service (Mic + Meet)</button>
+        <button class="btn-secondary" id="stopServiceBtn" type="button">Stop Service</button>
+      </div>
+      <span class="path-hint" id="meetStatusHint"></span>
+    </section>
+  </main>
+
+  <!-- STAGE 2: TRIM & EDIT -->
+  <main class="container hidden" id="stageEdit">
+    <section class="card studio-card">
+      <div class="rec-header">
+        <div>
+          <h2 class="section-title" id="editorFileTitle">Waveform Editor</h2>
+          <p class="section-sub" id="editorTimeInfo">Load a recording or drop an audio file to cut, copy, or paste</p>
+        </div>
+        <button class="btn-chip" id="editorBrowseBtn" type="button">Open File</button>
+      </div>
+
+      <div class="wave-box">
+        <canvas id="waveCanvas" width="760" height="160"></canvas>
+      </div>
+
+      <div class="editor-toolbar">
+        <button class="btn-secondary" id="edPlayBtn" type="button">Play</button>
+        <button class="btn-secondary" id="edCutBtn" type="button" title="Ctrl+X">Cut</button>
+        <button class="btn-secondary" id="edCopyBtn" type="button" title="Ctrl+C">Copy</button>
+        <button class="btn-secondary" id="edPasteBtn" type="button" title="Ctrl+V">Paste</button>
+        <button class="btn-secondary" id="edDeleteBtn" type="button" title="Delete">Delete</button>
+        <button class="btn-secondary" id="edUndoBtn" type="button" title="Ctrl+Z">Undo</button>
+        <button class="btn-primary" id="edSendToMasterBtn" type="button" style="margin-left:auto;">Master This Audio &rarr;</button>
+      </div>
+      <span class="path-hint" id="editorStatusHint">Tip: Click to place playhead, drag to select a region.</span>
+    </section>
+  </main>
+
+  <!-- STAGE 3: MASTER & SHARE -->
+  <main class="container" id="stageMaster">
     <!-- Drop Zone Card -->
     <section class="card drop-card" id="dropZone" tabindex="0" role="button" aria-label="Select Audacity project or audio file">
       <div class="drop-icon">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
           <polyline points="17 8 12 3 7 8"></polyline>
           <line x1="12" y1="3" x2="12" y2="15"></line>
@@ -68,12 +155,31 @@
       </div>
     </section>
 
-    <!-- Message Name Override & Local Save Destination -->
+    <!-- Structured Message Name Builder & Save Destination -->
     <section class="card config-strip" style="grid-template-columns: 1fr;">
       <div class="field">
-        <label for="customNameInput">Message / File Name (editable)</label>
-        <input type="text" id="customNameInput" placeholder="Auto-filled when you pick a file..." />
+        <div class="label-row">
+          <label>Message Name Builder</label>
+          <button type="button" class="btn-chip" id="toggleBuilderBtn">Raw Edit</button>
+        </div>
+
+        <!-- Structured single-line builder -->
+        <div class="builder-grid" id="builderGrid">
+          <input type="date" id="metaDate" class="date-input" title="Message Date" />
+          <div class="auto-wrap">
+            <input type="text" id="metaTitle" placeholder="Message Title (type to search...)" autocomplete="off" />
+            <div class="auto-dropdown hidden" id="titleDropdown"></div>
+          </div>
+          <input type="number" id="metaPart" min="1" placeholder="Part" title="Part number" />
+          <input type="text" id="metaPreacher" list="preacherList" placeholder="Preacher" />
+          <input type="text" id="metaLanguage" list="languageList" placeholder="Language" />
+        </div>
+        <datalist id="preacherList"></datalist>
+        <datalist id="languageList"></datalist>
+
+        <input type="text" id="customNameInput" class="preview-name-input" placeholder="26.11.2026 - Message Title - Part 1 - Preacher - English" />
       </div>
+
       <div class="field">
         <div class="label-row">
           <label id="localDirTitle">Save to Local Folder</label>
@@ -121,7 +227,7 @@
     <section class="card progress-card hidden" id="progressCard">
       <div class="progress-header">
         <span class="progress-label" id="progressLabel">Initializing...</span>
-        <span class="progress-step" id="progressStep">Step 1 / 6</span>
+        <span class="progress-step" id="progressStep">Step 1 / 5</span>
       </div>
       <div class="progress-track">
         <div class="progress-fill" id="progressFill" style="width: 8%"></div>

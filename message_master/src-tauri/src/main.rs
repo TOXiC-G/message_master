@@ -1,17 +1,23 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod aup3;
+mod catalog;
 mod config;
 mod dsp;
+mod editor;
 mod gdrive;
+mod recorder;
 mod updater;
 
-use config::AppConfig;
+use catalog::MessageCatalog;
 use chrono::Datelike;
+use config::AppConfig;
+use editor::{EditorState, WaveformSummary};
 use gdrive::DriveFolder;
+use recorder::{AudioInputDevice, RecorderState};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 #[derive(Debug, Clone, Serialize)]
 struct ProgressEvent {
@@ -359,8 +365,193 @@ async fn upload_mastered_file(
     })
 }
 
+#[tauri::command]
+fn get_catalog() -> MessageCatalog {
+    MessageCatalog::load()
+}
+
+#[tauri::command]
+fn save_catalog_entry(title: String, part: u32, preacher: String, language: String) {
+    let mut cat = MessageCatalog::load();
+    cat.record_usage(&title, part, &preacher, &language);
+}
+
+#[tauri::command]
+fn list_audio_inputs() -> Result<Vec<AudioInputDevice>, String> {
+    recorder::list_input_devices()
+}
+
+#[tauri::command]
+fn rec_start(
+    app: AppHandle,
+    state: State<'_, RecorderState>,
+    device_name: Option<String>,
+) -> Result<String, String> {
+    recorder::start_recording(&state, app, device_name)
+}
+
+#[tauri::command]
+fn rec_pause_toggle(state: State<'_, RecorderState>) -> Result<bool, String> {
+    recorder::toggle_pause(&state)
+}
+
+#[tauri::command]
+fn rec_stop(state: State<'_, RecorderState>) -> Result<String, String> {
+    recorder::stop_recording(&state)
+}
+
+#[tauri::command]
+async fn editor_load(
+    app: AppHandle,
+    state: State<'_, EditorState>,
+    input_path: String,
+) -> Result<WaveformSummary, String> {
+    let ffmpeg = resolve_ffmpeg(&app)?;
+    let path = PathBuf::from(&input_path);
+    if !path.exists() {
+        return Err("Audio file not found.".into());
+    }
+    editor::load_file(&state, &ffmpeg, &path)
+}
+
+#[tauri::command]
+fn editor_cut(state: State<'_, EditorState>, start_s: f64, end_s: f64) -> Result<WaveformSummary, String> {
+    editor::cut_region(&state, start_s, end_s)
+}
+
+#[tauri::command]
+fn editor_copy(state: State<'_, EditorState>, start_s: f64, end_s: f64) -> Result<WaveformSummary, String> {
+    editor::copy_region(&state, start_s, end_s)
+}
+
+#[tauri::command]
+fn editor_delete(state: State<'_, EditorState>, start_s: f64, end_s: f64) -> Result<WaveformSummary, String> {
+    editor::delete_region(&state, start_s, end_s)
+}
+
+#[tauri::command]
+fn editor_paste(state: State<'_, EditorState>, at_s: f64) -> Result<WaveformSummary, String> {
+    editor::paste_at(&state, at_s)
+}
+
+#[tauri::command]
+fn editor_undo(state: State<'_, EditorState>) -> Result<WaveformSummary, String> {
+    editor::undo(&state)
+}
+
+#[tauri::command]
+fn editor_play(app: AppHandle, state: State<'_, EditorState>, start_s: f64) -> Result<(), String> {
+    editor::play_from(&state, app, start_s)
+}
+
+#[tauri::command]
+fn editor_stop(state: State<'_, EditorState>) {
+    editor::stop_playback(&state);
+}
+
+#[tauri::command]
+fn editor_export_wav(state: State<'_, EditorState>) -> Result<String, String> {
+    editor::export_temp_wav(&state)
+}
+
+#[tauri::command]
+async fn open_meet_window(app: AppHandle, url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("Please enter your Google Meet URL first.".into());
+    }
+    let parsed: tauri::Url = trimmed
+        .parse()
+        .map_err(|e| format!("Invalid Google Meet URL: {e}"))?;
+
+    if let Some(win) = app.get_webview_window("meet") {
+        let _ = win.set_focus();
+        return Ok(());
+    }
+
+    WebviewWindowBuilder::new(&app, "meet", WebviewUrl::External(parsed))
+        .title("Google Meet — MessageMaster")
+        .inner_size(920.0, 680.0)
+        .resizable(true)
+        .build()
+        .map_err(|e| format!("Failed to open Meet window: {e}"))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn meet_control(app: AppHandle, action: String) -> Result<(), String> {
+    let win = app
+        .get_webview_window("meet")
+        .ok_or_else(|| "Open the Meet window first.".to_string())?;
+
+    let js = match action.as_str() {
+        "toggle_cam" => {
+            r#"(function(){
+                const btn = document.querySelector('[aria-label*="camera" i]');
+                if (btn) btn.click();
+            })();"#
+        }
+        "start" => {
+            r#"(function(){
+                const camOff = document.querySelector('[aria-label*="Turn on camera" i]');
+                if (camOff) camOff.click();
+                const join = Array.from(document.querySelectorAll('button')).find(b => /join now|ask to join/i.test(b.innerText));
+                if (join) join.click();
+                setTimeout(() => {
+                    const recQuick = document.querySelector('[aria-label*="Record" i]');
+                    if (recQuick) { recQuick.click(); return; }
+                    const act = document.querySelector('[aria-label*="Activities" i], [aria-label*="Meeting tools" i]');
+                    if (act) {
+                        act.click();
+                        setTimeout(() => {
+                            const recItem = Array.from(document.querySelectorAll('[role="menuitem"], [role="button"], button, li'))
+                                .find(el => /recording/i.test(el.innerText || ''));
+                            if (recItem) {
+                                recItem.click();
+                                setTimeout(() => {
+                                    const startBtn = Array.from(document.querySelectorAll('button'))
+                                        .find(b => /start recording/i.test(b.innerText || ''));
+                                    if (startBtn) {
+                                        startBtn.click();
+                                        setTimeout(() => {
+                                            const confirmBtn = Array.from(document.querySelectorAll('button'))
+                                                .find(b => /^start$/i.test((b.innerText || '').trim()));
+                                            if (confirmBtn) confirmBtn.click();
+                                        }, 500);
+                                    }
+                                }, 600);
+                            }
+                        }, 500);
+                    }
+                }, 800);
+            })();"#
+        }
+        "stop" => {
+            r#"(function(){
+                const stopBtn = Array.from(document.querySelectorAll('button, [role="button"]'))
+                    .find(b => /stop recording/i.test(b.innerText || b.getAttribute('aria-label') || ''));
+                if (stopBtn) {
+                    stopBtn.click();
+                    setTimeout(() => {
+                        const confirm = Array.from(document.querySelectorAll('button'))
+                            .find(b => /stop recording/i.test(b.innerText || ''));
+                        if (confirm) confirm.click();
+                    }, 500);
+                }
+            })();"#
+        }
+        _ => return Err("Unknown Meet control action.".into()),
+    };
+
+    win.eval(js)
+        .map_err(|e| format!("Failed to control Meet window: {e}"))
+}
+
 fn main() {
     tauri::Builder::default()
+        .manage(RecorderState::new())
+        .manage(EditorState::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
@@ -384,7 +575,24 @@ fn main() {
             rename_drive_folder,
             delete_drive_folder,
             process_audio,
-            upload_mastered_file
+            upload_mastered_file,
+            get_catalog,
+            save_catalog_entry,
+            list_audio_inputs,
+            rec_start,
+            rec_pause_toggle,
+            rec_stop,
+            editor_load,
+            editor_cut,
+            editor_copy,
+            editor_delete,
+            editor_paste,
+            editor_undo,
+            editor_play,
+            editor_stop,
+            editor_export_wav,
+            open_meet_window,
+            meet_control
         ])
         .run(tauri::generate_context!())
         .expect("error while running MessageMaster");
