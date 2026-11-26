@@ -68,7 +68,7 @@ impl Default for AppConfig {
             refresh_token: None,
             max_size_mb: 30.0,
             target_lufs: -16.0,
-            make_public_link: true,
+            make_public_link: false,
         }
     }
 }
