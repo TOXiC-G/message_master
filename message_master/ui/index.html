@@ -122,7 +122,12 @@
           <h2 class="section-title" id="editorFileTitle">Waveform Editor</h2>
           <p class="section-sub" id="editorTimeInfo">Load a recording or drop an audio file to cut, copy, or paste</p>
         </div>
-        <button class="btn-chip" id="editorBrowseBtn" type="button">Open File</button>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <button class="btn-chip" id="edZoomOutBtn" type="button" title="Zoom Out (Ctrl+Scroll Down)">&minus;</button>
+          <button class="btn-chip" id="edZoomFitBtn" type="button" title="Fit Entire Waveform">Fit</button>
+          <button class="btn-chip" id="edZoomInBtn" type="button" title="Zoom In (Ctrl+Scroll Up)">+</button>
+          <button class="btn-chip" id="editorBrowseBtn" type="button">Open File</button>
+        </div>
       </div>
 
       <div class="wave-box">

@@ -553,6 +553,16 @@ fn editor_export_wav(state: State<'_, EditorState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn editor_peaks(
+    state: State<'_, EditorState>,
+    start_s: f64,
+    end_s: f64,
+    buckets: usize,
+) -> Result<Vec<(f32, f32)>, String> {
+    editor::get_peaks_range(&state, start_s, end_s, buckets)
+}
+
+#[tauri::command]
 async fn embed_meet(
     app: AppHandle,
     url: String,
@@ -731,6 +741,7 @@ fn main() {
             editor_play,
             editor_stop,
             editor_export_wav,
+            editor_peaks,
             embed_meet,
             set_meet_bounds,
             meet_control

@@ -447,8 +447,15 @@ const edPasteBtn = document.getElementById("edPasteBtn");
 const edDeleteBtn = document.getElementById("edDeleteBtn");
 const edUndoBtn = document.getElementById("edUndoBtn");
 const edSendToMasterBtn = document.getElementById("edSendToMasterBtn");
+const edZoomOutBtn = document.getElementById("edZoomOutBtn");
+const edZoomFitBtn = document.getElementById("edZoomFitBtn");
+const edZoomInBtn = document.getElementById("edZoomInBtn");
 
 let waveSummary = null;
+let viewStartS = 0;
+let viewEndS = 0;
+let viewPeaks = null;
+let peakFetchTimer = null;
 let selStartS = 0;
 let selEndS = 0;
 let playheadS = 0;
@@ -456,6 +463,98 @@ let isPlaying = false;
 let isDraggingWave = false;
 let dragAnchorS = 0;
 let editorDisplayName = "";
+
+function formatRulerTime(sec, span) {
+  const s = Math.max(0, sec);
+  if (span < 10) return `${s.toFixed(1)}s`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const rem = Math.floor(s % 60);
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(rem).padStart(2, "0")}`;
+  return `${m}:${String(rem).padStart(2, "0")}`;
+}
+
+function chooseTickStep(span) {
+  const candidates = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800];
+  for (const c of candidates) {
+    if (span / c <= 10) return c;
+  }
+  return 3600;
+}
+
+function schedulePeakFetch() {
+  if (!waveSummary || waveSummary.duration_s <= 0) return;
+  const dur = waveSummary.duration_s;
+  const span = viewEndS - viewStartS;
+  if (span >= dur * 0.98) {
+    viewPeaks = null;
+    return;
+  }
+  clearTimeout(peakFetchTimer);
+  peakFetchTimer = setTimeout(async () => {
+    try {
+      viewPeaks = await invoke("editor_peaks", {
+        startS: viewStartS,
+        endS: viewEndS,
+        buckets: 1600,
+      });
+      drawWaveform();
+    } catch {}
+  }, 45);
+}
+
+function zoomEditorBy(factor, anchorTimeS) {
+  if (!waveSummary || waveSummary.duration_s <= 0) return;
+  const dur = waveSummary.duration_s;
+  const oldSpan = Math.max(0.2, (viewEndS || dur) - viewStartS);
+  const newSpan = Math.max(0.2, Math.min(dur, oldSpan * factor));
+  const anchor = typeof anchorTimeS === "number" ? anchorTimeS : (viewStartS + oldSpan / 2);
+  const frac = Math.max(0, Math.min(1, (anchor - viewStartS) / oldSpan));
+  let nextStart = anchor - frac * newSpan;
+  let nextEnd = nextStart + newSpan;
+  if (nextStart < 0) {
+    nextStart = 0;
+    nextEnd = newSpan;
+  }
+  if (nextEnd > dur) {
+    nextEnd = dur;
+    nextStart = Math.max(0, dur - newSpan);
+  }
+  viewStartS = nextStart;
+  viewEndS = nextEnd;
+  schedulePeakFetch();
+  drawWaveform();
+}
+
+function drawAudacityLeftRuler(ctx, rulerW, topH, trackH, dpr) {
+  ctx.fillStyle = "#e2e2e8";
+  ctx.fillRect(0, topH, rulerW, trackH);
+  ctx.strokeStyle = "#8e8e98";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(rulerW, topH);
+  ctx.lineTo(rulerW, topH + trackH);
+  ctx.stroke();
+
+  const labels = [
+    { txt: "1.0", y: topH + 8 * dpr },
+    { txt: "0.5", y: topH + trackH * 0.25 },
+    { txt: "0.0", y: topH + trackH * 0.5 },
+    { txt: "-0.5", y: topH + trackH * 0.75 },
+    { txt: "-1.0", y: topH + trackH - 6 * dpr },
+  ];
+  ctx.fillStyle = "#1e293b";
+  ctx.font = `${Math.round(9.5 * dpr)}px "Plus Jakarta Sans", sans-serif`;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (const lb of labels) {
+    ctx.fillText(lb.txt, rulerW - 5 * dpr, lb.y);
+    ctx.beginPath();
+    ctx.moveTo(rulerW - 3 * dpr, lb.y);
+    ctx.lineTo(rulerW, lb.y);
+    ctx.stroke();
+  }
+}
 
 function drawWaveform() {
   const dpr = window.devicePixelRatio || 1;
@@ -468,29 +567,40 @@ function drawWaveform() {
     waveCanvas.height = h;
   }
   const rulerW = Math.round(36 * dpr);
+  const topH = Math.round(22 * dpr);
   const trackW = Math.max(10, w - rulerW);
-  const mid = h / 2;
-  const ampScale = mid - 8 * dpr;
+  const trackH = Math.max(20, h - topH);
+  const mid = topH + trackH / 2;
+  const ampScale = trackH / 2 - 6 * dpr;
 
+  // Top X-axis time ruler background
+  waveCtx.fillStyle = "#e2e2e8";
+  waveCtx.fillRect(0, 0, w, topH);
   waveCtx.fillStyle = "#c8c8ce";
-  waveCtx.fillRect(0, 0, w, h);
+  waveCtx.fillRect(rulerW, topH, trackW, trackH);
 
+  // Horizontal 0.5 / -0.5 reference lines
   waveCtx.strokeStyle = "#b2b2ba";
   waveCtx.lineWidth = 1;
   for (const frac of [0.25, 0.75]) {
     waveCtx.beginPath();
-    waveCtx.moveTo(rulerW, h * frac);
-    waveCtx.lineTo(w, h * frac);
+    waveCtx.moveTo(rulerW, topH + trackH * frac);
+    waveCtx.lineTo(w, topH + trackH * frac);
     waveCtx.stroke();
   }
 
   if (!waveSummary || !waveSummary.peaks.length || waveSummary.duration_s <= 0) {
+    waveCtx.strokeStyle = "#8e8e98";
+    waveCtx.beginPath();
+    waveCtx.moveTo(0, topH);
+    waveCtx.lineTo(w, topH);
+    waveCtx.stroke();
     waveCtx.strokeStyle = "#334155";
     waveCtx.beginPath();
     waveCtx.moveTo(rulerW, mid);
     waveCtx.lineTo(w, mid);
     waveCtx.stroke();
-    drawAudacityRuler(waveCtx, rulerW, h, dpr);
+    drawAudacityLeftRuler(waveCtx, rulerW, topH, trackH, dpr);
     waveCtx.fillStyle = "#475569";
     waveCtx.font = `${Math.round(13 * dpr)}px "Plus Jakarta Sans", sans-serif`;
     waveCtx.textAlign = "center";
@@ -499,19 +609,53 @@ function drawWaveform() {
   }
 
   const dur = waveSummary.duration_s;
+  const vStart = Math.max(0, Math.min(viewStartS, dur));
+  const vEnd = Math.max(vStart + 0.05, Math.min(viewEndS || dur, dur));
+  const vSpan = vEnd - vStart;
+
+  // X-axis time ticks + subtle vertical grid
+  const tickStep = chooseTickStep(vSpan);
+  const firstTick = Math.ceil(vStart / tickStep) * tickStep;
+  waveCtx.font = `${Math.round(9.5 * dpr)}px "Plus Jakarta Sans", sans-serif`;
+  waveCtx.textAlign = "center";
+  waveCtx.textBaseline = "middle";
+  for (let t = firstTick; t <= vEnd + 1e-6; t += tickStep) {
+    const x = rulerW + ((t - vStart) / vSpan) * trackW;
+    waveCtx.strokeStyle = "#b6b6c0";
+    waveCtx.beginPath();
+    waveCtx.moveTo(x, topH);
+    waveCtx.lineTo(x, h);
+    waveCtx.stroke();
+
+    waveCtx.strokeStyle = "#64748b";
+    waveCtx.beginPath();
+    waveCtx.moveTo(x, topH - 5 * dpr);
+    waveCtx.lineTo(x, topH);
+    waveCtx.stroke();
+
+    waveCtx.fillStyle = "#1e293b";
+    waveCtx.fillText(formatRulerTime(t, vSpan), x, topH * 0.45);
+  }
+
+  // Ruler bottom border
+  waveCtx.strokeStyle = "#8e8e98";
+  waveCtx.beginPath();
+  waveCtx.moveTo(0, topH);
+  waveCtx.lineTo(w, topH);
+  waveCtx.stroke();
 
   // Selection highlight
   const sA = Math.min(selStartS, selEndS);
   const sB = Math.max(selStartS, selEndS);
-  if (sB > sA) {
-    const x1 = rulerW + (sA / dur) * trackW;
-    const x2 = rulerW + (sB / dur) * trackW;
+  if (sB > sA && sB >= vStart && sA <= vEnd) {
+    const x1 = rulerW + ((Math.max(sA, vStart) - vStart) / vSpan) * trackW;
+    const x2 = rulerW + ((Math.min(sB, vEnd) - vStart) / vSpan) * trackW;
     waveCtx.fillStyle = "rgba(50, 50, 200, 0.16)";
-    waveCtx.fillRect(x1, 0, x2 - x1, h);
+    waveCtx.fillRect(x1, topH, x2 - x1, trackH);
   }
 
   // Audacity-style continuous filled waveform polygon
-  const peaks = waveSummary.peaks;
+  const peaks = viewPeaks || waveSummary.peaks;
   waveCtx.fillStyle = "#3232c8";
   waveCtx.beginPath();
   for (let i = 0; i < peaks.length; i++) {
@@ -539,28 +683,64 @@ function drawWaveform() {
   waveCtx.stroke();
 
   // Playhead
-  const px = rulerW + (playheadS / dur) * trackW;
-  waveCtx.strokeStyle = "#059669";
-  waveCtx.lineWidth = Math.max(2, 2 * dpr);
-  waveCtx.beginPath();
-  waveCtx.moveTo(px, 0);
-  waveCtx.lineTo(px, h);
-  waveCtx.stroke();
+  if (playheadS >= vStart && playheadS <= vEnd) {
+    const px = rulerW + ((playheadS - vStart) / vSpan) * trackW;
+    waveCtx.strokeStyle = "#059669";
+    waveCtx.lineWidth = Math.max(2, 2 * dpr);
+    waveCtx.beginPath();
+    waveCtx.moveTo(px, topH);
+    waveCtx.lineTo(px, h);
+    waveCtx.stroke();
+  }
 
-  drawAudacityRuler(waveCtx, rulerW, h, dpr);
+  drawAudacityLeftRuler(waveCtx, rulerW, topH, trackH, dpr);
 
+  const zoomPct = Math.round((dur / vSpan) * 100);
   const selText = sB > sA ? ` | Selection: ${formatTime(sA)} - ${formatTime(sB)}` : "";
-  editorTimeInfo.textContent = `Duration: ${formatTime(dur)} | Cursor: ${formatTime(playheadS)}${selText}`;
+  const zoomText = zoomPct > 100 ? ` | Zoom: ${zoomPct}%` : "";
+  editorTimeInfo.textContent = `Duration: ${formatTime(dur)} | Cursor: ${formatTime(playheadS)}${selText}${zoomText}`;
 }
 
 function xToTime(clientX) {
   if (!waveSummary || waveSummary.duration_s <= 0) return 0;
+  const dur = waveSummary.duration_s;
+  const vStart = Math.max(0, Math.min(viewStartS, dur));
+  const vEnd = Math.max(vStart + 0.05, Math.min(viewEndS || dur, dur));
   const rect = waveCanvas.getBoundingClientRect();
   const rulerW = 36;
   const trackW = Math.max(1, rect.width - rulerW);
   const frac = Math.max(0, Math.min(1, (clientX - rect.left - rulerW) / trackW));
-  return frac * waveSummary.duration_s;
+  return vStart + frac * (vEnd - vStart);
 }
+
+waveCanvas.addEventListener("wheel", (e) => {
+  if (!waveSummary || waveSummary.duration_s <= 0) return;
+  if (e.ctrlKey) {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 0.72 : 1.38;
+    zoomEditorBy(factor, xToTime(e.clientX));
+  } else if ((viewEndS - viewStartS) < waveSummary.duration_s * 0.99) {
+    e.preventDefault();
+    const dur = waveSummary.duration_s;
+    const span = viewEndS - viewStartS;
+    const delta = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY);
+    const shift = (delta / 600) * span;
+    viewStartS = Math.max(0, Math.min(dur - span, viewStartS + shift));
+    viewEndS = viewStartS + span;
+    schedulePeakFetch();
+    drawWaveform();
+  }
+}, { passive: false });
+
+if (edZoomInBtn) edZoomInBtn.addEventListener("click", () => zoomEditorBy(0.65, playheadS));
+if (edZoomOutBtn) edZoomOutBtn.addEventListener("click", () => zoomEditorBy(1.5, playheadS));
+if (edZoomFitBtn) edZoomFitBtn.addEventListener("click", () => {
+  if (!waveSummary) return;
+  viewStartS = 0;
+  viewEndS = waveSummary.duration_s;
+  viewPeaks = null;
+  drawWaveform();
+});
 
 waveCanvas.addEventListener("mousedown", (e) => {
   if (!waveSummary) return;
@@ -586,6 +766,9 @@ async function openFileInEditor(path, overrideName) {
   editorStatusHint.textContent = "Loading waveform...";
   try {
     waveSummary = await invoke("editor_load", { inputPath: path });
+    viewStartS = 0;
+    viewEndS = waveSummary.duration_s || 0;
+    viewPeaks = null;
     selStartS = 0;
     selEndS = 0;
     playheadS = 0;

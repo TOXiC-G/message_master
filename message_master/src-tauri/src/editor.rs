@@ -44,20 +44,13 @@ impl EditorState {
     }
 }
 
-fn build_summary(sess: &EditSession) -> WaveformSummary {
-    let n = sess.samples.len();
-    let buckets = 1600usize;
+fn compute_peaks(slice: &[f32], buckets: usize) -> Vec<(f32, f32)> {
+    let n = slice.len();
+    let buckets = buckets.max(1);
     let mut peaks = Vec::with_capacity(buckets);
     if n == 0 {
-        return WaveformSummary {
-            duration_s: 0.0,
-            sample_rate: sess.sr,
-            peaks,
-            has_clipboard: !sess.clipboard.is_empty(),
-            can_undo: !sess.undo_stack.is_empty(),
-        };
+        return peaks;
     }
-
     let step = (n as f64 / buckets as f64).max(1.0);
     for b in 0..buckets {
         let s0 = (b as f64 * step) as usize;
@@ -68,13 +61,18 @@ fn build_summary(sess: &EditSession) -> WaveformSummary {
         }
         let mut mn = 0.0f32;
         let mut mx = 0.0f32;
-        for &v in &sess.samples[s0..s1] {
+        for &v in &slice[s0..s1] {
             if v < mn { mn = v; }
             if v > mx { mx = v; }
         }
         peaks.push((mn, mx));
     }
+    peaks
+}
 
+fn build_summary(sess: &EditSession) -> WaveformSummary {
+    let n = sess.samples.len();
+    let peaks = compute_peaks(&sess.samples, 1600);
     WaveformSummary {
         duration_s: n as f64 / sess.sr as f64,
         sample_rate: sess.sr,
@@ -82,6 +80,24 @@ fn build_summary(sess: &EditSession) -> WaveformSummary {
         has_clipboard: !sess.clipboard.is_empty(),
         can_undo: !sess.undo_stack.is_empty(),
     }
+}
+
+pub fn get_peaks_range(
+    state: &EditorState,
+    start_s: f64,
+    end_s: f64,
+    buckets: usize,
+) -> Result<Vec<(f32, f32)>, String> {
+    let guard = state.session.lock().map_err(|e| e.to_string())?;
+    let sess = guard.as_ref().ok_or("No audio loaded in editor.")?;
+    let n = sess.samples.len();
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+    let sr = sess.sr as f64;
+    let i0 = ((start_s.max(0.0) * sr) as usize).min(n.saturating_sub(1));
+    let i1 = ((end_s.max(0.0) * sr) as usize).clamp(i0 + 1, n);
+    Ok(compute_peaks(&sess.samples[i0..i1], buckets.clamp(64, 4000)))
 }
 
 pub fn load_file(
