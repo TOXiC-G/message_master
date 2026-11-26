@@ -217,7 +217,7 @@ async fn process_audio(
         std::fs::create_dir_all(&out_dir)
             .map_err(|e| format!("Failed to create output folder: {e}"))?;
     }
-    let out_path = out_dir.join(format!("{safe_filename}_MASTERED.mp3"));
+    let out_path = out_dir.join(format!("{safe_filename}.mp3"));
 
     let app_clone = app.clone();
     let in_path_clone = in_path.clone();
