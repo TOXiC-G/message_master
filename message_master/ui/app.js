@@ -213,12 +213,15 @@ function drawLiveWaveform(paused, recording) {
   const topH = showTimeRuler ? Math.round(18 * dpr) : 0;
   const rulerW = Math.round(36 * dpr);
   const trackW = Math.max(10, w - rulerW);
+  const mid = h / 2;
+  const ampScale = mid - 4 * dpr;
   const trackH = Math.max(20, h - topH);
   const mid = topH + trackH / 2;
   const ampScale = trackH / 2 - 4 * dpr;
 
   // Audacity silver-grey track background
   ctx.fillStyle = "#c8c8ce";
+  ctx.fillRect(0, 0, w, h);
   ctx.fillRect(0, topH, w, trackH);
 
   if (showTimeRuler) {
@@ -264,6 +267,8 @@ function drawLiveWaveform(paused, recording) {
   ctx.lineWidth = 1;
   for (const frac of [0.25, 0.75]) {
     ctx.beginPath();
+    ctx.moveTo(rulerW, h * frac);
+    ctx.lineTo(w, h * frac);
     ctx.moveTo(rulerW, topH + trackH * frac);
     ctx.lineTo(w, topH + trackH * frac);
     ctx.stroke();
@@ -311,6 +316,7 @@ function drawLiveWaveform(paused, recording) {
   ctx.lineTo(w, mid);
   ctx.stroke();
 
+  drawAudacityRuler(ctx, rulerW, h, dpr);
   if (showTimeRuler) {
     drawAudacityLeftRuler(ctx, rulerW, topH, trackH, dpr);
   } else {
@@ -1195,6 +1201,7 @@ function applyConfigToUI(cfg) {
   document.getElementById("cfgClientSecret").value = cfg.oauth_client_secret || "";
   document.getElementById("cfgMaxMb").value = cfg.max_size_mb ?? 30;
   document.getElementById("cfgLufs").value = cfg.target_lufs ?? -16;
+  document.getElementById("cfgPublicLink").checked = cfg.make_public_link ?? true;
   document.getElementById("cfgPublicLink").checked = cfg.make_public_link ?? false;
   cfgMeetUrl.value = cfg.meet_url || "";
 
@@ -1261,6 +1268,9 @@ function readConfigFromUI(existing) {
 
 function setSelectedFile(path, overrideDisplay) {
   selectedPath = path;
+  if (!overrideDisplay) {
+    originalRecordedWavPath = null;
+  }
   const fileName = path.split(/[\\/]/).pop();
   dropTitle.textContent = overrideDisplay || fileName;
   dropSub.textContent = path;
